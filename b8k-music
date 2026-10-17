@@ -814,8 +814,8 @@ class Music(Gtk.Application):
             self.answers.get("home_row", row["id"], view["shows"][row["id"]], force=True)
 
     def _home_row(self, view, row, section, cards, items, error):
-        if not view.get("alive") or error:
-            return
+        if not view.get("alive") or error or view["sections"].get(row["id"]) is not section:
+            return  # the rows were made anew meanwhile
         clear(cards)
         if not items:
             section.hide()
