@@ -6,6 +6,8 @@ The words this project uses for what it does.
   of `sources/__init__.py`.
 - **Answers** — what the source said, kept (`answers.py`): a page shows them at once and they
   are asked for again when older than a quarter of an hour.
+- **Likes** — the tracks one likes (`likes.py`); a heart shows the last tap at once and the
+  service is told after.
 - **Session** — what plays (`playback.py`): a queue taken from a list or a radio, the track
   playing, and what the source is told about it. One per window.
 - **Queue** — the session's own tracks. A list's queue is fixed; a radio's grows.

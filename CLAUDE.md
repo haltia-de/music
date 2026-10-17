@@ -10,7 +10,7 @@ targets, Russian UI, playback continues with the window closed.
 
 There is no build or linter. Checks available:
 
-- `python3 -m unittest` — tests in `tests/` (playback, answers, with stand-ins from `tests/fake.py`;
+- `python3 -m unittest` — tests in `tests/` (playback, answers, likes, with stand-ins from `tests/fake.py`;
   no GTK, mpv or network). One test: `python3 -m unittest tests.test_playback.Radio`.
   Not installed on the tablet.
 - `python3 -m py_compile b8k-music *.py sources/*.py` — syntax check.
@@ -19,7 +19,7 @@ There is no build or linter. Checks available:
   (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/b8k-music` after an `install.sh` into a scratch ROOT).
   Without the tablet shell, `b8k_ui` is absent and the program falls back (no buzz, `ask()` always yes).
 - `sh install.sh [ROOT]` — installs into a root file system; the tablet shell's image build calls it.
-  Copies `answers.py`, `playback.py` and `sources/` to `/usr/local/lib/b8k-music`; a new module next to them
+  Copies the top-level `*.py` modules and `sources/` to `/usr/local/lib/b8k-music`; a new module next to them
   needs a line there. Downloads pinned wheels (sha256-checked, cached in `$B8K_CACHE` or `.cache/`) and unpacks them
   next to the sources in `/usr/local/lib/b8k-music`. Bumping a library means updating both URL and sum
   in the `WHEELS` heredoc.
@@ -29,7 +29,7 @@ There is no build or linter. Checks available:
 - `b8k-music` — the window, one Python file: `Music(Gtk.Application)` (app id `b8k.Music`),
   `Player` (libmpv, sound only), `Covers` (cover cache in `~/.cache/b8k-music/`).
 - `playback.py` — `Session`, what plays (see Playback below); `answers.py` — `Answers`, the
-  service's answers kept (see Caching). No GTK; each docstring is its module's interface.
+  service's answers kept (see Caching); `likes.py` — `Likes`, the hearts. No GTK; each docstring is its module's interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
   adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import
@@ -104,8 +104,10 @@ buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). `Pla
 - Leaving a track that played its sound, paused or not, is a skip; playing to the end is a finish.
   A track without a stream (or an mpv error) goes quiet and gives way after `GIVE_WAY` seconds,
   unless another was chosen.
-- Likes: `self.liked` (track ids) via `fetch("liked")`; hearts update optimistically and
-  revert if `src.like()` fails.
+- Likes: `self.likes` (`likes.Likes`) answers `liked(track)` and takes `toggle(track)`; the heart
+  changes at once, one request per track is in flight and the service ends with the last tap; a
+  failure reverts to the confirmed state. Liked ids come via `answers` (`refresh()` on the first
+  page, forced on the house button); confirmed taps stay on until an answer shows them.
 - `$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend` exists while music plays; it keeps the tablet from
   suspending (the shell's b8k-sleep reads it).
 - Closing the window (the shell's «Закрыть» sends a toplevel close) stops the music and quits; music

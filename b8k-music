@@ -60,6 +60,7 @@ for path in (HERE, "/usr/local/lib/b8k-music"):
         sys.path.insert(0, path)
         break
 import answers  # noqa: E402
+import likes  # noqa: E402
 import playback  # noqa: E402
 import sources  # noqa: E402
 
@@ -333,17 +334,16 @@ class Music(Gtk.Application):
         self.sources = sources.load()
         self.src = self.sources.get("yandex") or (next(iter(self.sources.values()))
                                                  if self.sources else None)
-        self.can_like = bool(self.src and hasattr(self.src, "like")
-                             and hasattr(self.src, "liked"))
         self.covers = Covers()
         self.qualities = getattr(self.src, "qualities", None) or []
         self.quality = load_setting("quality", self.qualities[0][0] if self.qualities else "")
         self.answers = answers.Answers(self.src, self.work, self.later, DATA)
+        self.likes = likes.Likes(self.src, self.answers, self.work,
+                                 lambda: self.update_hearts(), self.say)
         # Where one is: the section's root first, then what was opened in it.
         # A view is a dict; its page and widgets live in it while it is open.
         self.views = []
         self.roots = {}
-        self.liked = set()
         self.bar = None
         self.radio_view = None  # the page that shows the radio playing
         self.seeking = False
@@ -504,7 +504,7 @@ class Music(Gtk.Application):
     def _logout(self):
         self.stop()
         self.src.logout()
-        self.liked = set()
+        self.likes.reset()
         self.answers.reset()
         self.show_login()
         return False
@@ -527,8 +527,7 @@ class Music(Gtk.Application):
         self.page.pack_start(self.stack, True, True, 0)
         self.page.show_all()
         self.win.set_focus(None)
-        if self.can_like:
-            self.answers.get("liked", None, self._liked)
+        self.likes.refresh()
         self.go_root("home")
 
     def drop_views(self):
@@ -811,6 +810,7 @@ class Music(Gtk.Application):
 
     def refresh_home(self, view):
         view["page"].get_vadjustment().set_value(0)
+        self.likes.refresh(force=True)
         for row in view.get("rows") or []:
             self.answers.get("home_row", row["id"], view["shows"][row["id"]], force=True)
 
@@ -901,10 +901,10 @@ class Music(Gtk.Application):
             if kind(t) == "track":
                 dur = styled(Gtk.Label(label=mmss(t.get("duration"))), "sub")
                 box.pack_start(dur, False, False, 0)
-                if self.can_like:
+                if self.likes.able:
                     heart = styled(Gtk.Button(), "heart")
                     heart.set_valign(Gtk.Align.CENTER)
-                    heart.connect("clicked", lambda _b, tr=t: self.toggle_like(tr))
+                    heart.connect("clicked", lambda _b, tr=t: self.likes.toggle(tr))
                     view["hearts"].append((heart, t))
                     box.pack_start(heart, False, False, 0)
             else:
@@ -948,13 +948,8 @@ class Music(Gtk.Application):
                 (ctx.add_class if same else ctx.remove_class)("playing")
 
     # --- what one likes ---------------------------------------------------------
-    def _liked(self, ids, error):
-        if not error and ids is not None:
-            self.liked = set(ids)
-            self.update_hearts()
-
     def set_heart(self, btn, track):
-        on = bool(track) and track["id"] in self.liked
+        on = self.likes.liked(track)
         btn.set_label("♥" if on else "♡")
         ctx = btn.get_style_context()
         (ctx.add_class if on else ctx.remove_class)("on")
@@ -963,25 +958,8 @@ class Music(Gtk.Application):
         for v in self.open_views(view):
             for btn, track in v.get("hearts", []):
                 self.set_heart(btn, track)
-        if self.can_like:
+        if self.likes.able and self.bar:
             self.set_heart(self.bar_heart, self.session.current)
-
-    def toggle_like(self, track):
-        if not track:
-            return
-        on = track["id"] not in self.liked
-        (self.liked.add if on else self.liked.discard)(track["id"])
-        self.update_hearts()
-        self.answers.forget("tracks", "likes")
-        self.answers.forget("liked", None)
-        self.work(lambda _a: self.src.like(track, on), None,
-                  lambda _r, err: self._like_done(track, on, err))
-
-    def _like_done(self, track, on, error):
-        if error:
-            (self.liked.discard if on else self.liked.add)(track["id"])
-            self.update_hearts()
-            self.say("Не удалось отметить трек: нет связи?")
 
     # --- the bar ----------------------------------------------------------------
     def make_bar(self):
@@ -1010,8 +988,8 @@ class Music(Gtk.Application):
         bar.pack_start(mid, True, True, 0)
         self.bar_heart = styled(Gtk.Button(label="♡"), "heart")
         self.bar_heart.set_valign(Gtk.Align.CENTER)
-        self.bar_heart.connect("clicked", lambda *_a: self.toggle_like(self.session.current))
-        self.bar_heart.set_no_show_all(not self.can_like)
+        self.bar_heart.connect("clicked", lambda *_a: self.likes.toggle(self.session.current))
+        self.bar_heart.set_no_show_all(not self.likes.able)
         bar.pack_start(self.bar_heart, False, False, 0)
         for label, cls, cb in (("⏮", "ctl", self.session.prev),
                                ("▶", "ctl main", self.session.toggle),
