@@ -1,0 +1,691 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+"""Музыка: a music service in large type, playing in the background.
+
+The first page shows the service's collections as tiles (Моя волна, Мне
+нравится, one's playlists) and a search field; a tile or a search fills the
+list under them, and a tap on a track plays from it on. A radio (Моя волна)
+plays on and on, fetching more as it goes. The bar at the bottom shows the
+track and holds back, pause and on, and the time bar seeks.
+
+Closing the window while music plays only hides it: the music goes on, and
+the program's tile on the home screen brings the same window back. While it
+plays, $XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend keeps the tablet from
+sleeping when the screen goes off (b8k-sleep); the screen itself may go off.
+
+Services are the sources package next to this file (or in
+/usr/local/lib/b8k-music): Яндекс Музыка now, others the same way. Playback
+is libmpv through python-mpv, sound only.
+"""
+import hashlib
+import os
+import sys
+import threading
+import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, GObject, Gtk, Pango
+
+sys.path.insert(0, "/usr/local/share/b8k/python")
+try:
+    import b8k_ui
+except ImportError:
+    b8k_ui = None
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+for path in (HERE, "/usr/local/lib/b8k-music"):
+    if os.path.isdir(os.path.join(path, "sources")):
+        sys.path.insert(0, path)
+        break
+import sources  # noqa: E402
+
+CACHE = os.path.expanduser("~/.cache/b8k-music")
+UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
+RADIO_AHEAD = 2  # fetch more radio tracks when this few are left
+
+CSS = b"""
+window, .page { background-color: #e6e6e4; }
+headerbar label.title { font-size: 34px; font-weight: bold; color: #2e3436; }
+entry.search { font-size: 26px; min-height: 64px; border-radius: 16px; padding: 0 16px; }
+button.find, button.login, button.tile, button.ctl, button.quiet {
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 16px;
+}
+button.find, button.login { background-color: #3584e4; color: #ffffff;
+  min-height: 64px; font-size: 24px; padding: 0 24px; }
+button.find:disabled { background-color: #99c1f1; }
+button.tile { background-color: #f2f2f0; color: #2e3436; min-height: 96px;
+  font-size: 24px; padding: 0 20px; }
+button.tile.wave { background-color: #3584e4; color: #ffffff; font-weight: bold; }
+button.tile.current { background-color: #c4dcf7; }
+button.quiet { background-color: #f2f2f0; color: #2e3436; min-height: 64px;
+  font-size: 22px; padding: 0 20px; }
+list, row { background-color: #f2f2f0; }
+row { padding: 8px 12px; }
+row:hover { background-color: #e8e8e6; }
+row:active, row:selected, row:selected:hover { background-color: #c4dcf7; }
+row label.ttl { font-size: 24px; color: #2e3436; }
+row label.sub { font-size: 19px; color: #5e5c64; }
+row.playing label.ttl { color: #1c71d8; font-weight: bold; }
+label.note { font-size: 24px; color: #5e5c64; }
+label.code { font-size: 64px; font-weight: bold; color: #2e3436; }
+.bar { background-color: #dcdcda; padding: 12px 16px; }
+.bar label.ttl { font-size: 24px; font-weight: bold; color: #2e3436; }
+.bar label.sub { font-size: 20px; color: #5e5c64; }
+.bar label.time { font-size: 18px; color: #5e5c64; }
+button.ctl { background-color: #f2f2f0; color: #2e3436; min-width: 96px;
+  min-height: 80px; font-size: 32px; }
+button.ctl.main { background-color: #3584e4; color: #ffffff; min-width: 120px; }
+scale trough { min-height: 10px; border-radius: 5px; }
+scale slider { min-width: 32px; min-height: 32px; }
+"""
+
+
+def buzzer():
+    return b8k_ui.Buzz() if b8k_ui else (lambda *_a: True)
+
+
+def ask(question, yes):
+    return b8k_ui.ask(question, yes) if b8k_ui else True
+
+
+def mmss(sec):
+    if not sec or sec < 0:
+        return "0:00"
+    sec = int(sec)
+    return "%d:%02d" % (sec // 60, sec % 60)
+
+
+class Covers:
+    """Album covers, fetched by a few workers and kept on disk."""
+
+    def __init__(self):
+        self.pool = ThreadPoolExecutor(max_workers=3)
+        os.makedirs(CACHE, exist_ok=True)
+
+    def get(self, url, image, size):
+        if not url:
+            return
+        path = os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+        if os.path.exists(path):
+            self._show(path, image, size)
+        else:
+            self.pool.submit(self._fetch, url, path, image, size)
+
+    def _fetch(self, url, path, image, size):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = resp.read(512 * 1024)
+            with open(path + ".new", "wb") as fh:
+                fh.write(data)
+            os.replace(path + ".new", path)
+        except OSError:
+            return
+        GLib.idle_add(self._show, path, image, size)
+
+    @staticmethod
+    def _show(path, image, size):
+        try:
+            image.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True))
+        except GLib.Error:
+            pass
+        return False
+
+
+class Player:
+    """libmpv, sound only. Callbacks come back on the GTK side."""
+
+    def __init__(self, on_end, on_time, on_pause):
+        import mpv
+
+        self.mpv = mpv.MPV(video=False, ytdl=False, input_default_bindings=False,
+                           terminal=False, cache="yes", demuxer_max_bytes="16MiB")
+        self.on_end, self.on_time, self.on_pause = on_end, on_time, on_pause
+        self.mpv.observe_property("time-pos", lambda _n, v: GLib.idle_add(self.on_time, v))
+        self.mpv.observe_property("pause", lambda _n, v: GLib.idle_add(self.on_pause, v))
+
+        @self.mpv.event_callback("end-file")
+        def _end(event):
+            data = getattr(event, "data", None)
+            reason = getattr(data, "reason", None)
+            # 0 is the end of the file; a new loadfile also ends the old one.
+            if reason in (0, "eof", b"eof") or str(reason).endswith("EOF"):
+                GLib.idle_add(self.on_end)
+
+    def play(self, url):
+        self.mpv.play(url)
+        self.mpv.pause = False
+
+    def toggle(self):
+        self.mpv.pause = not self.mpv.pause
+
+    def seek(self, sec):
+        try:
+            self.mpv.seek(sec, reference="absolute")
+        except Exception:
+            pass
+
+    def time(self):
+        try:
+            return self.mpv.time_pos or 0
+        except Exception:
+            return 0
+
+
+class Music(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="b8k.Music")
+        self.sources = sources.load()
+        self.src = self.sources.get("yandex") or (next(iter(self.sources.values()))
+                                                 if self.sources else None)
+        self.covers = Covers()
+        self.shown = []
+        self.bar = None
+        self.player = None
+        self.queue = []
+        self.index = -1
+        self.radio = None  # the radio collection playing, or None
+        self.collection = None
+        self.duration = 0
+        self.playing = False
+        self.seeking = False
+        self.win = None
+        self.held = False
+        self.awake = None
+        run = os.environ.get("XDG_RUNTIME_DIR")
+        if run:
+            os.makedirs(os.path.join(run, "b8k-awake"), mode=0o700, exist_ok=True)
+            self.awake = os.path.join(run, "b8k-awake", "%d.suspend" % os.getpid())
+
+    # --- the window ---------------------------------------------------------
+    def do_activate(self):
+        if self.win:
+            self.win.present()
+            return
+        self.buzz = buzzer()
+        GObject.type_class_ref(Gtk.Button)
+        GObject.add_emission_hook(Gtk.Button, "pressed", self.buzz)
+        provider = Gtk.CssProvider()
+        provider.load_from_data((b8k_ui.HEADER_CSS if b8k_ui else b"") + CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.win = Gtk.ApplicationWindow(application=self, title="Музыка")
+        self.win.set_default_size(1160, 800)
+        self.win.connect("delete-event", self.on_close)
+        header = Gtk.HeaderBar(title="Музыка")
+        self.out_btn = Gtk.Button(label="Выйти")
+        self.out_btn.get_style_context().add_class("quiet")
+        self.out_btn.connect("clicked", lambda *_a: self.logout())
+        self.out_btn.set_no_show_all(True)
+        header.pack_end(self.out_btn)
+        self.win.set_titlebar(header)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        page.set_border_width(16)
+        page.get_style_context().add_class("page")
+        self.page = page
+        outer.pack_start(page, True, True, 0)
+        outer.pack_start(self.make_bar(), False, False, 0)
+        self.win.add(outer)
+        self.win.show_all()
+        self.bar.hide()
+        self.win.set_focus(None)
+        if not self.src:
+            self.note_only("Нет ни одного музыкального сервиса.")
+        elif self.src.logged_in():
+            self.show_main()
+        else:
+            self.show_login()
+
+    def on_close(self, *_a):
+        # Music goes on with the window hidden; without music, quit.
+        if self.playing:
+            self.win.hide()
+            return True
+        return False
+
+    def clear_page(self):
+        for child in self.page.get_children():
+            self.page.remove(child)
+            child.destroy()
+
+    def note_only(self, text):
+        self.clear_page()
+        label = Gtk.Label(label=text)
+        label.get_style_context().add_class("note")
+        label.set_line_wrap(True)
+        self.page.pack_start(label, True, True, 0)
+        self.page.show_all()
+
+    # --- signing in -----------------------------------------------------------
+    def show_login(self):
+        self.out_btn.hide()
+        self.clear_page()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        box.set_valign(Gtk.Align.CENTER)
+        label = Gtk.Label(label="Войдите в %s, чтобы слушать музыку." % self.src.label)
+        label.get_style_context().add_class("note")
+        box.pack_start(label, False, False, 0)
+        btn = Gtk.Button(label="Войти")
+        btn.get_style_context().add_class("login")
+        btn.set_halign(Gtk.Align.CENTER)
+        btn.connect("clicked", lambda *_a: self.login())
+        box.pack_start(btn, False, False, 0)
+        self.page.pack_start(box, True, True, 0)
+        self.page.show_all()
+
+    def login(self):
+        self.note_only("Получаю код…")
+        self.work(lambda _a: self.src.login_start(), None, self._login_code)
+
+    def _login_code(self, res, error):
+        if error or not res:
+            self.note_only("Не удалось начать вход: нет связи?")
+            GLib.timeout_add_seconds(4, lambda: (self.show_login(), False)[1])
+            return
+        self.clear_page()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        box.set_valign(Gtk.Align.CENTER)
+        url = res["url"].replace("https://", "")
+        for text, cls in (("На телефоне или компьютере откройте", "note"),
+                          (url, "code"), ("и введите код", "note"), (res["code"], "code"),
+                          ("Жду подтверждения…", "note")):
+            label = Gtk.Label(label=text, selectable=False)
+            label.get_style_context().add_class(cls)
+            box.pack_start(label, False, False, 0)
+        self.page.pack_start(box, True, True, 0)
+        self.page.show_all()
+        self.work(lambda _a: self.src.login_wait(), None, self._login_done)
+
+    def _login_done(self, ok, error):
+        if error or not ok:
+            self.note_only("Вход не подтверждён.")
+            GLib.timeout_add_seconds(4, lambda: (self.show_login(), False)[1])
+            return
+        self.show_main()
+
+    def logout(self):
+        def worker():
+            if ask("Выйти из %s?" % self.src.label, "Выйти"):
+                GLib.idle_add(self._logout)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _logout(self):
+        self.stop()
+        self.src.logout()
+        self.show_login()
+        return False
+
+    # --- the main page --------------------------------------------------------
+    def show_main(self):
+        self.out_btn.show()
+        self.clear_page()
+        row = Gtk.Box(spacing=12)
+        self.entry = Gtk.Entry(placeholder_text="Найти трек или исполнителя")
+        self.entry.get_style_context().add_class("search")
+        self.entry.connect("activate", lambda *_a: self.search())
+        row.pack_start(self.entry, True, True, 0)
+        self.find_btn = Gtk.Button(label="Найти")
+        self.find_btn.get_style_context().add_class("find")
+        self.find_btn.connect("clicked", lambda *_a: self.search())
+        row.pack_start(self.find_btn, False, False, 0)
+        self.page.pack_start(row, False, False, 0)
+
+        self.tiles = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                                 max_children_per_line=4, min_children_per_line=4,
+                                 row_spacing=12, column_spacing=12)
+        self.page.pack_start(self.tiles, False, False, 0)
+        self.note = Gtk.Label()
+        self.note.get_style_context().add_class("note")
+        self.note.set_line_wrap(True)
+        self.page.pack_start(self.note, False, False, 8)
+        self.scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.list.connect("row-activated", self.on_row)
+        self.scroll.add(self.list)
+        self.page.pack_start(self.scroll, True, True, 0)
+        self.page.show_all()
+        self.win.set_focus(None)
+        self.say("Загружаю…")
+        self.work(lambda _a: self.src.collections(), None, self._collections)
+
+    def say(self, text):
+        self.note.set_text(text)
+        self.note.set_visible(bool(text))
+
+    def _collections(self, cols, error):
+        if error or cols is None:
+            self.say("Не удалось загрузить: нет связи или вход устарел.")
+            return
+        self.say("")
+        self.tile_btns = {}
+        for col in cols[:12]:
+            btn = Gtk.Button(label=col["title"])
+            btn.get_child().set_ellipsize(Pango.EllipsizeMode.END)
+            ctx = btn.get_style_context()
+            ctx.add_class("tile")
+            if col.get("radio"):
+                ctx.add_class("wave")
+            btn.connect("clicked", lambda _b, c=col: self.open_collection(c))
+            self.tiles.add(btn)
+            self.tile_btns[col["id"]] = btn
+        self.tiles.show_all()
+
+    def mark_tile(self, cid):
+        for key, btn in getattr(self, "tile_btns", {}).items():
+            ctx = btn.get_style_context()
+            if ctx.has_class("wave"):
+                continue
+            (ctx.add_class if key == cid else ctx.remove_class)("current")
+
+    def open_collection(self, col):
+        self.collection = col
+        self.mark_tile(col["id"])
+        if col.get("radio"):
+            # A radio starts playing at once; its tracks fill the list.
+            self.radio = col["id"]
+            self.queue, self.index = [], -1
+            self.fill([])
+            self.say("Запускаю «%s»…" % col["title"])
+            self.work(lambda _a: self.src.radio_next(col["id"], None), None, self._radio_first)
+            return
+        self.say("Загружаю «%s»…" % col["title"])
+        self.fill([])
+        self.work(self.src.tracks, col["id"], self._tracks)
+
+    def _tracks(self, tracks, error):
+        if error:
+            self.say("Не удалось загрузить: нет связи?")
+            return
+        self.say("" if tracks else "Здесь пока пусто.")
+        self.fill(tracks)
+
+    def _radio_first(self, tracks, error):
+        if error or not tracks:
+            self.say("Радио не запустилось: нет связи?")
+            return
+        self.say("")
+        self.queue = list(tracks)
+        self.fill(self.queue)
+        self.start(0)
+
+    def search(self):
+        query = self.entry.get_text().strip()
+        if not query or not self.find_btn.get_sensitive():
+            return
+        self.win.set_focus(None)
+        self.collection = None
+        self.mark_tile(None)
+        self.find_btn.set_sensitive(False)
+        self.say("Ищу «%s»…" % query)
+        self.fill([])
+        self.work(self.src.search, query, self._found)
+
+    def _found(self, tracks, error):
+        self.find_btn.set_sensitive(True)
+        if error:
+            self.say("Поиск не удался: нет связи?")
+            return
+        self.say("" if tracks else "Ничего не найдено.")
+        self.fill(tracks)
+
+    # --- the list ---------------------------------------------------------------
+    def fill(self, tracks):
+        # The very list, not a copy: a radio's list is its queue, which grows.
+        self.shown = tracks
+        for child in self.list.get_children():
+            self.list.remove(child)
+            child.destroy()
+        for i, t in enumerate(self.shown):
+            row = Gtk.ListBoxRow()
+            row.track_index = i
+            box = Gtk.Box(spacing=16)
+            image = Gtk.Image()
+            image.set_size_request(64, 64)
+            box.pack_start(image, False, False, 0)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            ttl = Gtk.Label(label=t["title"], xalign=0)
+            ttl.set_ellipsize(Pango.EllipsizeMode.END)
+            ttl.get_style_context().add_class("ttl")
+            sub = Gtk.Label(label=t["artist"], xalign=0)
+            sub.set_ellipsize(Pango.EllipsizeMode.END)
+            sub.get_style_context().add_class("sub")
+            text.pack_start(ttl, False, False, 0)
+            text.pack_start(sub, False, False, 0)
+            box.pack_start(text, True, True, 0)
+            dur = Gtk.Label(label=mmss(t.get("duration")))
+            dur.get_style_context().add_class("sub")
+            box.pack_start(dur, False, False, 0)
+            row.add(box)
+            self.list.add(row)
+            self.covers.get(t.get("cover"), image, 64)
+        self.list.show_all()
+        self.mark_playing()
+
+    def on_row(self, _list, row):
+        i = row.track_index
+        if self.radio and self.shown is self.queue:
+            self.start(i)
+            return
+        # A tap in a list plays that list from the track on.
+        self.radio = None
+        self.queue = list(self.shown)
+        self.shown = self.queue
+        self.start(i)
+
+    def mark_playing(self):
+        current = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
+        for row in self.list.get_children():
+            t = self.shown[row.track_index] if row.track_index < len(self.shown) else None
+            ctx = row.get_style_context()
+            same = current and t and t["id"] == current["id"] and t["source"] == current["source"]
+            (ctx.add_class if same else ctx.remove_class)("playing")
+
+    # --- the bar ----------------------------------------------------------------
+    def make_bar(self):
+        bar = Gtk.Box(spacing=16)
+        bar.get_style_context().add_class("bar")
+        self.bar_cover = Gtk.Image()
+        self.bar_cover.set_size_request(96, 96)
+        bar.pack_start(self.bar_cover, False, False, 0)
+        mid = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.bar_title = Gtk.Label(xalign=0)
+        self.bar_title.set_ellipsize(Pango.EllipsizeMode.END)
+        self.bar_title.get_style_context().add_class("ttl")
+        self.bar_artist = Gtk.Label(xalign=0)
+        self.bar_artist.set_ellipsize(Pango.EllipsizeMode.END)
+        self.bar_artist.get_style_context().add_class("sub")
+        mid.pack_start(self.bar_title, False, False, 0)
+        mid.pack_start(self.bar_artist, False, False, 0)
+        line = Gtk.Box(spacing=8)
+        self.bar_pos = Gtk.Label(label="0:00")
+        self.bar_pos.get_style_context().add_class("time")
+        self.scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 1)
+        self.scale.set_draw_value(False)
+        self.scale.connect("button-press-event", lambda *_a: setattr(self, "seeking", True))
+        self.scale.connect("button-release-event", self.on_seek)
+        self.bar_len = Gtk.Label(label="0:00")
+        self.bar_len.get_style_context().add_class("time")
+        line.pack_start(self.bar_pos, False, False, 0)
+        line.pack_start(self.scale, True, True, 0)
+        line.pack_start(self.bar_len, False, False, 0)
+        mid.pack_start(line, False, False, 0)
+        bar.pack_start(mid, True, True, 0)
+        for label, cls, cb in (("⏮", "ctl", self.prev), ("⏸", "ctl main", self.toggle),
+                               ("⏭", "ctl", self.next)):
+            btn = Gtk.Button(label=label)
+            for c in cls.split():
+                btn.get_style_context().add_class(c)
+            btn.set_valign(Gtk.Align.CENTER)
+            btn.connect("clicked", lambda *_a, f=cb: f())
+            bar.pack_start(btn, False, False, 0)
+            if "main" in cls:
+                self.play_btn = btn
+        self.bar = bar
+        return bar
+
+    def on_seek(self, *_a):
+        self.seeking = False
+        if self.player:
+            self.player.seek(self.scale.get_value())
+        return False
+
+    # --- playing ----------------------------------------------------------------
+    def ensure_player(self):
+        if self.player is None:
+            self.player = Player(self.on_end, self.on_time, self.on_pause)
+        return self.player
+
+    def start(self, i):
+        if not (0 <= i < len(self.queue)):
+            return
+        prev = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
+        if prev and self.radio and self.playing:
+            played = self.player.time() if self.player else 0
+            threading.Thread(target=self.src.feedback,
+                             args=(self.radio, "skip", prev, played), daemon=True).start()
+        self.index = i
+        track = self.queue[i]
+        self.bar.show()
+        self.bar_title.set_text(track["title"])
+        self.bar_artist.set_text(track["artist"])
+        self.duration = track.get("duration") or 0
+        self.scale.set_range(0, max(1, self.duration))
+        self.bar_len.set_text(mmss(self.duration))
+        self.bar_pos.set_text("0:00")
+        self.bar_cover.clear()
+        self.covers.get(track.get("cover"), self.bar_cover, 96)
+        self.mark_playing()
+        self.work(self.src.stream_url, track, lambda url, err, t=track: self._play(t, url, err))
+        if self.radio:
+            threading.Thread(target=self.src.feedback,
+                             args=(self.radio, "start", track, 0), daemon=True).start()
+            if len(self.queue) - i <= RADIO_AHEAD:
+                self.work(lambda _a, r=self.radio, last=track: self.src.radio_next(r, last),
+                          None, self._radio_more)
+
+    def _play(self, track, url, error):
+        if not (0 <= self.index < len(self.queue)) or self.queue[self.index] is not track:
+            return  # another track was chosen meanwhile
+        if error or not url:
+            self.say("Трек не играет: %s" % (error or "нет ссылки"))
+            GLib.timeout_add_seconds(2, lambda: (self.next(), False)[1])
+            return
+        try:
+            self.ensure_player().play(url)
+        except Exception as exc:
+            self.say("Нет проигрывателя (libmpv): %s" % exc)
+            return
+        self.set_playing(True)
+
+    def _radio_more(self, tracks, error):
+        if error or not tracks:
+            return
+        known = {t["id"] for t in self.queue}
+        self.queue.extend(t for t in tracks if t["id"] not in known)
+        if self.shown is self.queue:
+            self.fill(self.queue)
+
+    def on_end(self):
+        track = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
+        if track and self.radio:
+            threading.Thread(target=self.src.feedback,
+                             args=(self.radio, "finish", track, self.duration),
+                             daemon=True).start()
+        if self.index + 1 < len(self.queue):
+            self.playing = False  # the end was not a skip
+            self.start(self.index + 1)
+        else:
+            self.set_playing(False)
+        return False
+
+    def on_time(self, value):
+        if value is None:
+            return False
+        if not self.seeking:
+            self.scale.set_value(value)
+        self.bar_pos.set_text(mmss(value))
+        return False
+
+    def on_pause(self, paused):
+        self.set_playing(not paused if paused is not None else False)
+        return False
+
+    def set_playing(self, on):
+        self.playing = on
+        self.play_btn.set_label("⏸" if on else "▶")
+        if self.awake:
+            try:
+                if on:
+                    open(self.awake, "w").close()
+                elif os.path.exists(self.awake):
+                    os.unlink(self.awake)
+            except OSError:
+                pass
+        # Keep running with the window closed while music plays.
+        if on and not self.held:
+            self.hold()
+            self.held = True
+        elif not on and self.held:
+            self.release()
+            self.held = False
+
+    def toggle(self):
+        if self.player and self.index >= 0:
+            self.player.toggle()
+
+    def next(self):
+        if self.index + 1 < len(self.queue):
+            self.start(self.index + 1)
+
+    def prev(self):
+        if self.player and self.player.time() > 5:
+            self.player.seek(0)
+        elif self.index > 0:
+            self.start(self.index - 1)
+
+    def stop(self):
+        if self.player:
+            try:
+                self.player.mpv.stop()
+            except Exception:
+                pass
+        self.queue, self.index, self.radio = [], -1, None
+        self.set_playing(False)
+        if self.bar:
+            self.bar.hide()
+
+    def do_shutdown(self):
+        if self.awake and os.path.exists(self.awake):
+            os.unlink(self.awake)
+        Gtk.Application.do_shutdown(self)
+
+    # --- background work -------------------------------------------------------
+    def work(self, func, arg, done):
+        """func(arg) in a thread; done(result, error) back on the GTK side."""
+
+        def worker():
+            try:
+                res, err = func(arg), None
+            except Exception as exc:
+                sys.stderr.write("b8k-music: %s\n" % exc)
+                res, err = None, exc
+            GLib.idle_add(lambda: (done(res, err), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+
+if __name__ == "__main__":
+    sys.exit(Music().run(sys.argv))
