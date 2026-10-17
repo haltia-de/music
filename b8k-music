@@ -5,30 +5,41 @@
 Two sections, chosen in the header: the home (the house) shows rows of what
 the service offers, Моя волна and its modes, one's collection, the chart,
 new releases and picks, as covers to tap; Обзор goes through the service's
-folders, one list at a time, and ← goes back. A list plays from the tapped
-track on; a radio (Моя волна) plays on and on, fetching more as it goes,
-and its list grows with it. The search field finds tracks. A heart on a
-track puts it into Мне нравится or takes it out. The bar at the bottom
-shows the track and holds its heart, back, pause and on, and the time bar
-seeks.
+folders, one list at a time, and ← goes back. A tap only ever opens: music
+starts when one taps a track in a list or «▶ Слушать» on a list or a radio.
+A radio (Моя волна) plays on and on, fetching more as it goes, and its list
+grows with it. The search field finds tracks. A heart on a track puts it
+into Мне нравится or takes it out. The gear opens the settings: the sound
+quality, the lowest unless chosen (~/.config/b8k/music.conf). The bar at the bottom shows the track
+and holds its heart, back, pause and on, and the time bar seeks.
+
+Pages opened stay built until one goes back past them, so ← is at once and
+where one left it. The service's answers are kept in memory and on disk
+(~/.cache/b8k-music/data.json): a page shows what was known at once and
+asks the service again when that is older than a quarter of an hour. Covers
+are kept on disk and, decoded, in memory.
 
 Signing in shows a QR code to scan with the phone and a code to enter at
 the service's page, whichever is easier.
 
 The music goes on while other programs are in front; closing the window
-(the shell's «Закрыть») stops it and quits. While it plays, $XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend keeps the tablet from
-sleeping when the screen goes off (b8k-sleep); the screen itself may go off.
+(the shell's «Закрыть») stops it and quits. While it plays,
+$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend keeps the tablet from sleeping
+when the screen goes off (b8k-sleep); the screen itself may go off.
 
 Services are the sources package next to this file (or in
 /usr/local/lib/b8k-music): Яндекс Музыка now, others the same way. Playback
 is libmpv through python-mpv, sound only.
 """
+import configparser
 import hashlib
+import json
 import os
 import sys
 import threading
 import time
 import urllib.request
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import gi
@@ -52,6 +63,11 @@ for path in (HERE, "/usr/local/lib/b8k-music"):
 import sources  # noqa: E402
 
 CACHE = os.path.expanduser("~/.cache/b8k-music")
+CONFIG = os.path.expanduser("~/.config/b8k/music.conf")
+DATA = os.path.join(CACHE, "data.json")
+FRESH = 15 * 60  # seconds an answer of the service is taken as it is
+KEEP = 300  # answers kept on disk, the latest
+PIXBUFS = 400  # decoded covers kept in memory
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
 RADIO_AHEAD = 2  # fetch more radio tracks when this few are left
 CARD = 160  # the cover of a card on the home page
@@ -61,13 +77,14 @@ CSS = b"""
 window, .page { background-color: #e6e6e4; }
 headerbar label.title { font-size: 34px; font-weight: bold; color: #2e3436; }
 entry.search { font-size: 26px; min-height: 64px; border-radius: 16px; padding: 0 16px; }
-button.find, button.login, button.ctl, button.quiet, button.nav, button.card, button.heart {
+button.find, button.login, button.play, button.ctl, button.quiet, button.nav, button.card,
+button.heart, button.choice {
   background-image: none;
   border: none;
   box-shadow: none;
   border-radius: 16px;
 }
-button.find, button.login { background-color: #3584e4; color: #ffffff;
+button.find, button.login, button.play { background-color: #3584e4; color: #ffffff;
   min-height: 64px; font-size: 24px; padding: 0 24px; }
 button.find:disabled { background-color: #99c1f1; }
 button.quiet { background-color: #f2f2f0; color: #2e3436; min-height: 64px;
@@ -75,6 +92,12 @@ button.quiet { background-color: #f2f2f0; color: #2e3436; min-height: 64px;
 button.nav { background-color: #f2f2f0; border: 1px solid #c0bfbc; color: #2e3436;
   min-height: 72px; min-width: 96px; font-size: 26px; padding: 0 20px; }
 button.nav.current { background-color: #c4dcf7; }
+button.choice { background-color: #f2f2f0; padding: 16px 20px; }
+button.choice.current { background-color: #c4dcf7; }
+button.choice label.ttl { font-size: 24px; color: #2e3436; }
+button.choice label.sub { font-size: 19px; color: #5e5c64; }
+button.choice label.mark { font-size: 32px; color: #1c71d8; }
+label.section { font-size: 24px; font-weight: bold; color: #2e3436; }
 button.card { background-color: transparent; padding: 6px; }
 button.card:active { background-color: #c4dcf7; }
 button.card label.ttl { font-size: 20px; color: #2e3436; }
@@ -97,6 +120,7 @@ list, row { background-color: #f2f2f0; }
 row { padding: 8px 12px; }
 row:hover { background-color: #e8e8e6; }
 row:active, row:selected, row:selected:hover { background-color: #c4dcf7; }
+row.focus { background-color: #dcdcda; }
 row label.ttl { font-size: 24px; color: #2e3436; }
 row label.sub { font-size: 19px; color: #5e5c64; }
 row label.more { font-size: 32px; color: #5e5c64; }
@@ -132,6 +156,28 @@ def mmss(sec):
     return "%d:%02d" % (sec // 60, sec % 60)
 
 
+def load_setting(key, default):
+    """A setting of [music] in CONFIG."""
+    conf = configparser.ConfigParser(interpolation=None)
+    conf.read(CONFIG, encoding="utf-8")
+    return conf.get("music", key, fallback=default)
+
+
+def save_setting(key, value):
+    conf = configparser.ConfigParser(interpolation=None)
+    conf.read(CONFIG, encoding="utf-8")
+    if not conf.has_section("music"):
+        conf.add_section("music")
+    conf["music"][key] = value
+    try:
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+        with open(CONFIG + ".new", "w", encoding="utf-8") as fh:
+            conf.write(fh)
+        os.replace(CONFIG + ".new", CONFIG)
+    except OSError:
+        pass
+
+
 def kind(item):
     return item.get("kind", "track")
 
@@ -141,6 +187,12 @@ def styled(widget, *classes):
     for cls in classes:
         ctx.add_class(cls)
     return widget
+
+
+def clear(box):
+    for child in box.get_children():
+        box.remove(child)
+        child.destroy()
 
 
 def qr_code(text, size):
@@ -177,39 +229,51 @@ def qr_code(text, size):
 
 
 class Covers:
-    """Album covers, fetched by a few workers and kept on disk."""
+    """Album covers: files on disk, decoded ones in memory. Fetching and
+    decoding happen in workers, so the window never waits for them."""
 
     def __init__(self):
-        self.pool = ThreadPoolExecutor(max_workers=3)
+        self.disk = ThreadPoolExecutor(max_workers=2)
+        self.net = ThreadPoolExecutor(max_workers=3)
+        self.mem = OrderedDict()  # (url, size) -> pixbuf, the latest used last
         os.makedirs(CACHE, exist_ok=True)
 
     def get(self, url, image, size):
         if not url:
             return
-        path = os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
-        if os.path.exists(path):
-            self._show(path, image, size)
-        else:
-            self.pool.submit(self._fetch, url, path, image, size)
-
-    def _fetch(self, url, path, image, size):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = resp.read(512 * 1024)
-            with open(path + ".new", "wb") as fh:
-                fh.write(data)
-            os.replace(path + ".new", path)
-        except OSError:
+        key = (url, size)
+        pixbuf = self.mem.get(key)
+        if pixbuf is not None:
+            self.mem.move_to_end(key)
+            image.set_from_pixbuf(pixbuf)
             return
-        GLib.idle_add(self._show, path, image, size)
+        path = os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+        pool = self.disk if os.path.exists(path) else self.net
+        pool.submit(self._load, url, path, key, image)
 
-    @staticmethod
-    def _show(path, image, size):
+    def _load(self, url, path, key, image):
+        if not os.path.exists(path):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": UA})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    data = resp.read(512 * 1024)
+                with open(path + ".new", "wb") as fh:
+                    fh.write(data)
+                os.replace(path + ".new", path)
+            except OSError:
+                return
         try:
-            image.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True))
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, key[1], key[1], True)
         except GLib.Error:
-            pass
+            return
+        GLib.idle_add(self._show, key, pixbuf, image)
+
+    def _show(self, key, pixbuf, image):
+        self.mem[key] = pixbuf
+        self.mem.move_to_end(key)
+        while len(self.mem) > PIXBUFS:
+            self.mem.popitem(last=False)
+        image.set_from_pixbuf(pixbuf)
         return False
 
 
@@ -262,20 +326,22 @@ class Music(Gtk.Application):
         self.can_like = bool(self.src and hasattr(self.src, "like")
                              and hasattr(self.src, "liked"))
         self.covers = Covers()
-        self.views = []  # where one is: the section first, then what was opened in it
-        self.gen = 0  # counts the pages drawn, so late answers find theirs gone
-        self.home_rows = None
-        self.home_items = {}
+        self.qualities = getattr(self.src, "qualities", None) or []
+        self.quality = load_setting("quality", self.qualities[0][0] if self.qualities else "")
+        self.data = {}  # (what, arg) -> [time, answer]: the service's answers
+        self.saving = False
+        self.load_data()
+        # Where one is: the section's root first, then what was opened in it.
+        # A view is a dict; its page and widgets live in it while it is open.
+        self.views = []
+        self.roots = {}
         self.liked = set()
-        self.hearts = []  # (button, track) of the hearts on the page
-        self.shown = []
-        self.list = None
-        self.note = None
         self.bar = None
         self.player = None
         self.queue = []
         self.index = -1
         self.radio = None  # the radio playing, or None
+        self.radio_view = None  # the page that shows it
         self.duration = 0
         self.playing = False
         self.seeking = False
@@ -285,6 +351,62 @@ class Music(Gtk.Application):
         if run:
             os.makedirs(os.path.join(run, "b8k-awake"), mode=0o700, exist_ok=True)
             self.awake = os.path.join(run, "b8k-awake", "%d.suspend" % os.getpid())
+
+    # --- the service's answers, kept --------------------------------------------
+    def load_data(self):
+        try:
+            with open(DATA, encoding="utf-8") as fh:
+                for what, arg, stamp, answer in json.load(fh):
+                    self.data[(what, arg)] = [stamp, answer]
+        except (OSError, ValueError, TypeError):
+            self.data = {}
+
+    def save_soon(self):
+        if not self.saving:
+            self.saving = True
+            GLib.timeout_add_seconds(3, self.save_data)
+
+    def save_data(self):
+        self.saving = False
+        latest = sorted(self.data.items(), key=lambda kv: kv[1][0])[-KEEP:]
+        try:
+            os.makedirs(CACHE, exist_ok=True)
+            with open(DATA + ".new", "w", encoding="utf-8") as fh:
+                json.dump([[w, a, s, ans] for (w, a), (s, ans) in latest], fh,
+                          ensure_ascii=False)
+            os.replace(DATA + ".new", DATA)
+        except OSError:
+            pass
+        return False
+
+    def forget(self, what, arg):
+        self.data.pop((what, arg), None)
+
+    def fetch(self, what, arg, show, force=False):
+        """show(answer, error) at once with what is kept, and again when the
+        service's answer differs; the service is asked when what is kept is
+        older than FRESH (or force). what is a method of the source."""
+        entry = self.data.get((what, arg))
+        if entry:
+            show(entry[1], None)
+            if not force and time.time() - entry[0] < FRESH:
+                return
+        func = getattr(self.src, what)
+
+        def got(answer, error):
+            if error:
+                if not entry:
+                    show(None, error)
+                return
+            if isinstance(answer, set):
+                answer = sorted(answer)
+            old = self.data.get((what, arg))
+            self.data[(what, arg)] = [time.time(), answer]
+            self.save_soon()
+            if not old or old[1] != answer:
+                show(answer, None)
+
+        self.work(lambda a: func(a) if a is not None else func(), arg, got)
 
     # --- the window ---------------------------------------------------------
     def do_activate(self):
@@ -316,8 +438,13 @@ class Music(Gtk.Application):
             header.pack_start(btn)
         self.out_btn = styled(Gtk.Button(label="Выйти"), "quiet")
         self.out_btn.connect("clicked", lambda *_a: self.logout())
-        self.out_btn.set_no_show_all(True)
-        header.pack_end(self.out_btn)
+        self.gear = styled(Gtk.Button.new_from_icon_name("emblem-system-symbolic",
+                                                         Gtk.IconSize.DIALOG), "nav")
+        self.gear.set_tooltip_text("Настройки")
+        self.gear.connect("clicked", lambda *_a: self.open_settings())
+        for btn in (self.out_btn, self.gear):
+            btn.set_no_show_all(True)
+            header.pack_end(btn)
         self.win.set_titlebar(header)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -343,9 +470,8 @@ class Music(Gtk.Application):
         return False
 
     def clear_page(self):
-        for child in self.page.get_children():
-            self.page.remove(child)
-            child.destroy()
+        self.drop_views()
+        clear(self.page)
 
     def note_only(self, text):
         self.clear_page()
@@ -355,7 +481,7 @@ class Music(Gtk.Application):
         self.page.show_all()
 
     def show_nav(self, on):
-        for btn in (self.home_btn, self.browse_btn, self.out_btn):
+        for btn in (self.home_btn, self.browse_btn, self.out_btn, self.gear):
             btn.set_visible(on)
         self.back_btn.set_visible(on and len(self.views) > 1)
 
@@ -429,12 +555,15 @@ class Music(Gtk.Application):
     def _logout(self):
         self.stop()
         self.src.logout()
-        self.home_rows, self.home_items, self.liked = None, {}, set()
-        self.views = []
+        self.liked, self.data = set(), {}
+        try:
+            os.unlink(DATA)
+        except OSError:
+            pass
         self.show_login()
         return False
 
-    # --- the main page --------------------------------------------------------
+    # --- the pages --------------------------------------------------------------
     def show_main(self):
         self.clear_page()
         row = Gtk.Box(spacing=12)
@@ -445,103 +574,163 @@ class Music(Gtk.Application):
         self.find_btn.connect("clicked", lambda *_a: self.search())
         row.pack_start(self.find_btn, False, False, 0)
         self.page.pack_start(row, False, False, 0)
-
-        # Everything under the search scrolls together: anything tall outside
-        # the scrolled part keeps the window taller than the room the
+        # One page per open view, each scrolling as a whole: anything tall
+        # outside the scrolled part keeps the window taller than the room the
         # on-screen keyboard leaves, and the window then covers its top row.
-        self.scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
-        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.scroll.add(self.body)
-        self.page.pack_start(self.scroll, True, True, 0)
+        self.stack = Gtk.Stack()
+        self.page.pack_start(self.stack, True, True, 0)
         self.page.show_all()
         self.win.set_focus(None)
         if self.can_like:
-            self.work(lambda _a: self.src.liked(), None, self._liked)
+            self.fetch("liked", None, self._liked)
         self.go_root("home")
 
-    def say(self, text):
-        if self.note:
-            self.note.set_text(text)
-            self.note.set_visible(bool(text))
+    def drop_views(self):
+        for view in self.views + list(self.roots.values()):
+            self.drop(view)
+        self.views, self.roots, self.radio_view = [], {}, None
+
+    @staticmethod
+    def drop(view):
+        if view.get("alive"):
+            view["alive"] = False
+            view["page"].destroy()
 
     def go_root(self, section):
-        if self.views == [{"kind": "home"}] and section == "home":
-            self.home_rows, self.home_items = None, {}  # the house again: fresh rows
-        self.views = [{"kind": "home"} if section == "home"
-                      else {"kind": "browse", "id": "", "title": "Обзор"}]
-        self.render()
+        root = self.roots.get(section)
+        if root is not None and self.views == [root]:
+            if section == "home":
+                self.refresh_home(root)  # the house again: fresh rows
+            return
+        for view in self.views[1:]:
+            self.drop(view)
+        if root is None:
+            root = self.roots[section] = ({"kind": "home"} if section == "home" else
+                                          {"kind": "browse", "id": "", "title": "Обзор"})
+            self.views = [root]
+            self.make_page(root)
+        else:
+            self.views = [root]
+        self.show_top()
 
     def push(self, view):
         self.views.append(view)
-        self.render()
+        self.make_page(view)
+        self.show_top()
 
     def go_back(self):
         if len(self.views) > 1:
-            self.views.pop()
-            self.render()
+            self.drop(self.views.pop())
+            self.show_top()
 
-    def render(self):
-        """Draw the page of the last view."""
-        self.gen += 1
-        for child in self.body.get_children():
-            self.body.remove(child)
-            child.destroy()
-        self.list, self.note, self.hearts, self.shown = None, None, [], []
+    def show_top(self):
+        view = self.views[-1]
+        self.stack.set_visible_child(view["page"])
         self.show_nav(True)
         root = self.views[0]["kind"]
         for btn, section in ((self.home_btn, "home"), (self.browse_btn, "browse")):
             ctx = btn.get_style_context()
             (ctx.add_class if root == section else ctx.remove_class)("current")
-        self.scroll.get_vadjustment().set_value(0)
-        view = self.views[-1]
+        self.update_hearts(view)
+        self.mark_playing(view)
+
+    def make_page(self, view):
+        """Build the view's page into the stack and fill it."""
+        scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        scroll.add(box)
+        top = Gtk.Box(spacing=16)
         if view.get("title"):
             head = styled(Gtk.Label(label=view["title"], xalign=0), "head")
             head.set_ellipsize(Pango.EllipsizeMode.END)
-            self.body.pack_start(head, False, False, 0)
-        self.note = styled(Gtk.Label(), "note")
-        self.note.set_line_wrap(True)
-        self.body.pack_start(self.note, False, False, 8)
-        if view["kind"] == "home":
-            self.body.show_all()
-            self.say("")
-            self.render_home()
-            return
-        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        self.list.connect("row-activated", self.on_row)
-        self.body.pack_start(self.list, False, False, 0)
-        self.body.show_all()
-        self.say("")
-        if view["kind"] == "queue":
-            self.fill(self.queue)
-            if not self.queue:
-                self.say("Запускаю…" if self.radio else "Ничего не играет.")
-            return
-        if "items" in view:
-            self.fill(view["items"])
-            self.say("" if view["items"] else self.empty_text(view))
-            return
-        func, arg = {"browse": (self.src.browse, view.get("id")),
-                     "list": (self.src.tracks, view.get("id")),
-                     "search": (self.src.search, view.get("query"))}[view["kind"]]
-        self.say("Ищу…" if view["kind"] == "search" else "Загружаю…")
-        self.work(func, arg, lambda res, err, g=self.gen, v=view: self._loaded(v, g, res, err))
+            top.pack_start(head, True, True, 0)
+        play = None
+        if view["kind"] in ("list", "search", "radio"):
+            play = styled(Gtk.Button(label="▶ Слушать"), "play")
+            play.connect("clicked", lambda _b, v=view: self.listen(v))
+            play.set_no_show_all(True)
+            top.pack_end(play, False, False, 0)
+        box.pack_start(top, False, False, 0)
+        note = styled(Gtk.Label(), "note")
+        note.set_line_wrap(True)
+        note.set_no_show_all(True)
+        box.pack_start(note, False, False, 8)
+        lst = None
+        if view["kind"] == "settings":
+            self.settings_page(view, box)
+        elif view["kind"] != "home":
+            lst = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            lst.connect("row-activated", self.on_row, view)
+            box.pack_start(lst, False, False, 0)
+        view.update(page=scroll, box=box, note=note, list=lst, play=play, shown=[], hearts=[],
+                    alive=True)
+        self.stack.add(scroll)
+        scroll.show_all()
+        self.load_view(view)
 
-    @staticmethod
-    def empty_text(view):
-        return "Ничего не найдено." if view["kind"] == "search" else "Здесь пока пусто."
+    def say(self, text, view=None):
+        view = view or (self.views[-1] if self.views else None)
+        if view and view.get("alive"):
+            view["note"].set_text(text)
+            view["note"].set_visible(bool(text))
 
-    def _loaded(self, view, gen, items, error):
+    def load_view(self, view):
+        k = view["kind"]
+        if k == "settings":
+            return
+        if k == "home":
+            self.say("Загружаю…", view)
+            self.fetch("home", None, lambda rows, err: self._home(view, rows, err))
+        elif k == "radio":
+            if self.radio == view["id"]:
+                self.radio_view = view
+                self.fill(view, self.queue)
+            else:
+                view["play"].show()
+                self.say("Радио подбирает треки на ходу: нажмите «▶ Слушать».", view)
+        elif view.get("items") is not None:
+            self._items(view, view["items"], None)
+        else:
+            what, arg = {"browse": ("browse", view.get("id")), "list": ("tracks", view.get("id")),
+                         "search": ("search", view.get("query"))}[k]
+            self.say("Ищу…" if k == "search" else "Загружаю…", view)
+            self.fetch(what, arg, lambda items, err: self._items(view, items, err))
+
+    def _items(self, view, items, error):
         if view["kind"] == "search":
             self.find_btn.set_sensitive(True)
-        if not error:
-            view["items"] = items or []
-        if gen != self.gen:
+        if not view.get("alive"):
             return
         if error:
-            self.say("Не удалось загрузить: нет связи или вход устарел.")
+            self.say("Не удалось загрузить: нет связи или вход устарел.", view)
             return
-        self.say("" if items else self.empty_text(view))
-        self.fill(view["items"])
+        empty = "Ничего не найдено." if view["kind"] == "search" else "Здесь пока пусто."
+        self.say("" if items else empty, view)
+        self.fill(view, items)
+        if view.get("focus"):
+            self.focus(view, view.pop("focus"))
+
+    def focus(self, view, track_id):
+        """Scroll the page to the track and mark it, once it is laid out."""
+        rows = [r for r in view["list"].get_children()
+                if kind(view["shown"][r.track_index]) == "track"
+                and view["shown"][r.track_index]["id"] == track_id]
+        if not rows:
+            return
+        styled(rows[0], "focus")
+        tries = [20]
+
+        def scroll():
+            if not view.get("alive"):
+                return False
+            pos = rows[0].translate_coordinates(view["box"], 0, 0)
+            if (not pos or pos[1] <= 0) and tries[0] > 0:
+                tries[0] -= 1
+                return True
+            view["page"].get_vadjustment().set_value(max(0, pos[1] - 8) if pos else 0)
+            return False
+
+        GLib.timeout_add(50, scroll)
 
     def search(self):
         query = self.entry.get_text().strip()
@@ -551,26 +740,88 @@ class Music(Gtk.Application):
         self.find_btn.set_sensitive(False)
         self.push({"kind": "search", "query": query, "title": "Поиск: «%s»" % query})
 
-    def open_item(self, item, tracks=None):
+    def open_item(self, item, row=None, tracks=None):
+        """Open what was tapped; music never starts from here."""
         k = kind(item)
         if k == "track":
-            tracks = tracks or [item]
-            self.play_list(tracks, tracks.index(item))
+            # A track on the home page opens its row's list at the track.
+            view = {"kind": "list", "title": row["title"] if row else "", "focus": item["id"]}
+            if row and row.get("list"):
+                view["id"] = row["list"]
+            else:
+                view["items"] = tracks or [item]
+            self.push(view)
         elif k == "radio":
-            self.start_radio(item)
-            self.push({"kind": "queue", "title": item["title"]})
+            self.push({"kind": "radio", "id": item["id"], "title": item["title"]})
         else:
             self.push({"kind": "browse" if k == "folder" else "list",
                        "id": item["id"], "title": item["title"]})
 
-    # --- the home page --------------------------------------------------------
-    def render_home(self):
-        if self.home_rows is None:
-            self.say("Загружаю…")
-            self.work(lambda _a: self.src.home(), None,
-                      lambda rows, err, g=self.gen: self._home(g, rows, err))
+    def listen(self, view):
+        """«▶ Слушать»: a list from its first track, or the radio."""
+        if view["kind"] == "radio":
+            self.start_radio(view)
             return
-        for row in self.home_rows:
+        tracks = [t for t in view["shown"] if kind(t) == "track"]
+        if tracks:
+            self.play_list(tracks, 0)
+
+    # --- the settings -------------------------------------------------------------
+    def open_settings(self):
+        if self.views[-1]["kind"] != "settings":
+            self.push({"kind": "settings", "title": "Настройки"})
+
+    def settings_page(self, view, box):
+        if not self.qualities:
+            return
+        box.pack_start(styled(Gtk.Label(label="Качество звука", xalign=0), "section"),
+                       False, False, 0)
+        choices = []
+        for qid, title, hint in self.qualities:
+            btn = styled(Gtk.Button(), "choice")
+            row = Gtk.Box(spacing=16)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            text.pack_start(styled(Gtk.Label(label=title, xalign=0), "ttl"), False, False, 0)
+            text.pack_start(styled(Gtk.Label(label=hint, xalign=0), "sub"), False, False, 0)
+            row.pack_start(text, True, True, 0)
+            mark = styled(Gtk.Label(label="✓"), "mark")
+            row.pack_end(mark, False, False, 0)
+            btn.add(row)
+            btn.connect("clicked", lambda _b, q=qid: self.set_quality(view, q))
+            box.pack_start(btn, False, False, 0)
+            choices.append((qid, btn, mark))
+        view["choices"] = choices
+        self.mark_quality(view)
+
+    def mark_quality(self, view):
+        for qid, btn, mark in view["choices"]:
+            ctx = btn.get_style_context()
+            (ctx.add_class if qid == self.quality else ctx.remove_class)("current")
+            mark.set_opacity(1 if qid == self.quality else 0)
+
+    def set_quality(self, view, quality):
+        if quality == self.quality:
+            return
+        self.quality = quality
+        save_setting("quality", quality)
+        self.mark_quality(view)
+        if self.index >= 0:
+            self.say("Новое качество — со следующего трека.", view)
+
+    # --- the home page --------------------------------------------------------
+    def _home(self, view, rows, error):
+        if not view.get("alive"):
+            return
+        if error or not rows:
+            self.say("Не удалось загрузить: нет связи или вход устарел.", view)
+            return
+        self.say("", view)
+        if view.get("rows") == rows:
+            return
+        for section in view.get("sections", {}).values():
+            section.destroy()
+        view["rows"], view["sections"], view["shows"] = rows, {}, {}
+        for row in rows:
             section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             section.set_no_show_all(True)
             section.pack_start(styled(Gtk.Label(label=row["title"], xalign=0), "rowtitle"),
@@ -579,32 +830,24 @@ class Music(Gtk.Application):
             cards = Gtk.Box(spacing=12)
             strip.add(cards)
             section.pack_start(strip, False, False, 0)
-            self.body.pack_start(section, False, False, 4)
-            if row["id"] in self.home_items:
-                self.fill_cards(section, cards, self.home_items[row["id"]])
-            else:
-                self.work(self.src.home_row, row["id"],
-                          lambda items, err, r=row["id"], s=section, c=cards, g=self.gen:
-                          self._home_row(g, r, s, c, items, err))
+            view["box"].pack_start(section, False, False, 4)
+            view["sections"][row["id"]] = section
+            show = view["shows"][row["id"]] = (
+                lambda items, err, r=row, s=section, c=cards: self._home_row(view, r, s, c,
+                                                                            items, err))
+            self.fetch("home_row", row["id"], show)
 
-    def _home(self, gen, rows, error):
-        if gen != self.gen:
+    def refresh_home(self, view):
+        view["page"].get_vadjustment().set_value(0)
+        for row in view.get("rows") or []:
+            self.fetch("home_row", row["id"], view["shows"][row["id"]], force=True)
+
+    def _home_row(self, view, row, section, cards, items, error):
+        if not view.get("alive") or error:
             return
-        if error or not rows:
-            self.say("Не удалось загрузить: нет связи или вход устарел.")
-            return
-        self.say("")
-        self.home_rows = rows
-        self.render_home()
-
-    def _home_row(self, gen, row_id, section, cards, items, error):
-        if not error:
-            self.home_items[row_id] = items or []
-        if gen == self.gen and items:
-            self.fill_cards(section, cards, items)
-
-    def fill_cards(self, section, cards, items):
+        clear(cards)
         if not items:
+            section.hide()
             return
         tracks = [i for i in items if kind(i) == "track"]
         for item in items:
@@ -625,7 +868,7 @@ class Music(Gtk.Application):
                 sub.set_max_width_chars(1)
                 box.pack_start(sub, False, False, 0)
             btn.add(box)
-            btn.connect("clicked", lambda _b, i=item: self.open_item(i, tracks))
+            btn.connect("clicked", lambda _b, i=item: self.open_item(i, row, tracks))
             cards.pack_start(btn, False, False, 0)
         section.set_no_show_all(False)
         section.show_all()
@@ -644,21 +887,19 @@ class Music(Gtk.Application):
         box = styled(Gtk.Box(), "nocover", tint)
         box.set_size_request(size, size)
         label = Gtk.Label()
-        label.set_markup('<span size="%d">%s</span>' % (glyph_px * 768, item.get("glyph") or GLYPHS[kind(item)]))
+        label.set_markup('<span size="%d">%s</span>'
+                         % (glyph_px * 768, item.get("glyph") or GLYPHS[kind(item)]))
         box.set_center_widget(label)
         return box
 
-    # --- the list ---------------------------------------------------------------
-    def fill(self, items):
+    # --- the lists --------------------------------------------------------------
+    def fill(self, view, items):
         # The very list, not a copy: a radio's list is its queue, which grows.
-        self.shown = items
-        self.hearts = []
-        if self.list is None:
-            return
-        for child in self.list.get_children():
-            self.list.remove(child)
-            child.destroy()
-        for i, t in enumerate(self.shown):
+        view["shown"] = items
+        view["hearts"] = []
+        lst = view["list"]
+        clear(lst)
+        for i, t in enumerate(items):
             row = Gtk.ListBoxRow()
             row.track_index = i
             box = Gtk.Box(spacing=16)
@@ -681,46 +922,51 @@ class Music(Gtk.Application):
                     heart = styled(Gtk.Button(), "heart")
                     heart.set_valign(Gtk.Align.CENTER)
                     heart.connect("clicked", lambda _b, tr=t: self.toggle_like(tr))
-                    self.hearts.append((heart, t))
+                    view["hearts"].append((heart, t))
                     box.pack_start(heart, False, False, 0)
             else:
                 more = styled(Gtk.Label(label="▶" if kind(t) == "radio" else "›"), "more")
                 box.pack_start(more, False, False, 8)
             row.add(box)
-            self.list.add(row)
-        self.list.show_all()
-        self.update_hearts()
-        self.mark_playing()
+            lst.add(row)
+        lst.show_all()
+        if view["play"] is not None:
+            has_tracks = any(kind(t) == "track" for t in items)
+            view["play"].set_visible(not self.radio_on(view) if view["kind"] == "radio"
+                                     else has_tracks)
+        self.update_hearts(view)
+        self.mark_playing(view)
 
-    def on_row(self, _list, row):
+    def radio_on(self, view):
+        return self.radio == view.get("id") and bool(self.queue)
+
+    def on_row(self, _list, row, view):
         i = row.track_index
-        item = self.shown[i]
+        item = view["shown"][i]
         if kind(item) != "track":
             self.open_item(item)
             return
-        if self.radio and self.shown is self.queue:
+        if self.radio and view["shown"] is self.queue:
             self.start(i)
             return
-        # A tap in a list plays that list's tracks from this one on.
-        tracks = [t for t in self.shown if kind(t) == "track"]
-        if len(tracks) == len(self.shown):
-            self.radio = None
-            self.queue = list(self.shown)
-            self.shown = self.queue
-            self.start(i)
-        else:
-            self.play_list(tracks, tracks.index(item))
+        # A tap on a track plays the list's tracks from this one on.
+        tracks = [t for t in view["shown"] if kind(t) == "track"]
+        self.play_list(tracks, tracks.index(item))
 
-    def mark_playing(self):
+    def open_views(self, view=None):
+        return [view] if view else [v for v in self.views if v.get("alive")]
+
+    def mark_playing(self, view=None):
         current = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
-        if self.list is None:
-            return
-        for row in self.list.get_children():
-            t = self.shown[row.track_index] if row.track_index < len(self.shown) else None
-            ctx = row.get_style_context()
-            same = (current and t and kind(t) == "track" and t["id"] == current["id"]
-                    and t["source"] == current["source"])
-            (ctx.add_class if same else ctx.remove_class)("playing")
+        for v in self.open_views(view):
+            if not v.get("list"):
+                continue
+            for row in v["list"].get_children():
+                t = v["shown"][row.track_index] if row.track_index < len(v["shown"]) else None
+                same = (current and t and kind(t) == "track" and t["id"] == current["id"]
+                        and t["source"] == current["source"])
+                ctx = row.get_style_context()
+                (ctx.add_class if same else ctx.remove_class)("playing")
 
     # --- what one likes ---------------------------------------------------------
     def _liked(self, ids, error):
@@ -734,9 +980,10 @@ class Music(Gtk.Application):
         ctx = btn.get_style_context()
         (ctx.add_class if on else ctx.remove_class)("on")
 
-    def update_hearts(self):
-        for btn, track in self.hearts:
-            self.set_heart(btn, track)
+    def update_hearts(self, view=None):
+        for v in self.open_views(view):
+            for btn, track in v.get("hearts", []):
+                self.set_heart(btn, track)
         if self.can_like:
             current = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
             self.set_heart(self.bar_heart, current)
@@ -747,10 +994,8 @@ class Music(Gtk.Application):
         on = track["id"] not in self.liked
         (self.liked.add if on else self.liked.discard)(track["id"])
         self.update_hearts()
-        for view in self.views:
-            if view.get("id") == "likes":
-                view.pop("items", None)
-        self.home_items.pop("mine", None)
+        self.forget("tracks", "likes")
+        self.forget("liked", None)
         self.work(lambda _a: self.src.like(track, on), None,
                   lambda _r, err: self._like_done(track, on, err))
 
@@ -815,29 +1060,37 @@ class Music(Gtk.Application):
         return self.player
 
     def play_list(self, tracks, i):
-        self.radio = None
+        self.radio, self.radio_view = None, None
         self.queue = list(tracks)
         self.start(i)
+        for view in self.open_views():
+            if view["kind"] == "radio":
+                view["play"].show()
 
-    def start_radio(self, item):
-        if self.radio == item["id"] and self.queue:
-            return  # it plays already: only its list is shown
-        self.radio = item["id"]
+    def start_radio(self, view):
+        if self.radio_on(view):
+            return
+        self.radio, self.radio_view = view["id"], view
         self.queue, self.index = [], -1
-        self.work(lambda _a, r=item["id"]: self.src.radio_next(r, None), None,
-                  lambda tracks, err, r=item["id"]: self._radio_first(r, tracks, err))
+        view["play"].hide()
+        self.say("Запускаю…", view)
+        self.work(lambda _a, r=view["id"]: self.src.radio_next(r, None), None,
+                  lambda tracks, err, r=view["id"]: self._radio_first(r, tracks, err))
 
     def _radio_first(self, radio, tracks, error):
         if radio != self.radio:
             return  # another radio or list was chosen meanwhile
+        view = self.radio_view
         if error or not tracks:
-            self.radio = None
-            self.say("Радио не запустилось: нет связи?")
+            self.radio, self.radio_view = None, None
+            if view and view.get("alive"):
+                self.say("Радио не запустилось: нет связи?", view)
+                view["play"].show()
             return
         self.queue = list(tracks)
-        if self.views and self.views[-1]["kind"] == "queue":
-            self.say("")
-            self.fill(self.queue)
+        if view and view.get("alive"):
+            self.say("", view)
+            self.fill(view, self.queue)
         self.start(0)
 
     def start(self, i):
@@ -861,7 +1114,8 @@ class Music(Gtk.Application):
         self.covers.get(track.get("cover"), self.bar_cover, 96)
         self.mark_playing()
         self.update_hearts()
-        self.work(self.src.stream_url, track, lambda url, err, t=track: self._play(t, url, err))
+        self.work(lambda t: self.src.stream_url(t, self.quality), track,
+                  lambda url, err, t=track: self._play(t, url, err))
         if self.radio:
             threading.Thread(target=self.src.feedback,
                              args=(self.radio, "start", track, 0), daemon=True).start()
@@ -888,8 +1142,9 @@ class Music(Gtk.Application):
             return
         known = {t["id"] for t in self.queue}
         self.queue.extend(t for t in tracks if t["id"] not in known)
-        if self.shown is self.queue:
-            self.fill(self.queue)
+        view = self.radio_view
+        if view and view.get("alive") and view["shown"] is self.queue:
+            self.fill(view, self.queue)
 
     def on_end(self):
         track = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
@@ -948,12 +1203,14 @@ class Music(Gtk.Application):
                 self.player.mpv.stop()
             except Exception:
                 pass
-        self.queue, self.index, self.radio = [], -1, None
+        self.queue, self.index, self.radio, self.radio_view = [], -1, None, None
         self.set_playing(False)
         if self.bar:
             self.bar.hide()
 
     def do_shutdown(self):
+        if self.saving:
+            self.save_data()
         if self.awake and os.path.exists(self.awake):
             os.unlink(self.awake)
         Gtk.Application.do_shutdown(self)

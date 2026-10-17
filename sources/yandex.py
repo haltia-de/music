@@ -16,7 +16,9 @@ A radio is a rotor session: its seeds are the station and, for a mode of
 Моя волна, the mode's setting.
 
 The account is kept in ~/.local/share/b8k-music/yandex.json (mode 600).
-Streams are the plain (not encrypted) AAC or MP3 of /get-file-info.
+Streams are the plain (not encrypted) AAC or MP3 of /get-file-info, in the
+quality chosen in the settings: the same levels as the Music Assistant
+provider has.
 """
 import asyncio
 import datetime
@@ -26,9 +28,12 @@ import threading
 
 ACCOUNT = os.path.expanduser("~/.local/share/b8k-music/yandex.json")
 WAVE = "user:onyourwave"
-# The normal quality: AAC around 192 kbit/s, MP3 where there is no AAC.
-QUALITY = "nq"
-CODECS = ["aac-mp4", "aac", "mp3", "he-aac", "he-aac-mp4"]
+# Stream qualities: id -> (/get-file-info quality, codecs it may choose).
+QUALITY = {
+    "low": ("lq", ["he-aac-mp4", "he-aac", "aac-mp4", "aac", "mp3"]),
+    "normal": ("nq", ["aac-mp4", "aac", "mp3", "he-aac", "he-aac-mp4"]),
+    "high": ("lossless", ["mp3"]),
+}
 LIST_MAX = 100
 ROW_MAX = 20
 # Playlists the service keeps by itself that are no use here.
@@ -153,10 +158,16 @@ def _now():
 class Yandex:
     id = "yandex"
     label = "Яндекс Музыка"
+    qualities = [
+        ("low", "Экономное", "HE-AAC около 64 кбит/с: меньше всего трафика"),
+        ("normal", "Обычное", "AAC около 192 кбит/с"),
+        ("high", "Высокое", "MP3 до 320 кбит/с, если позволяет подписка"),
+    ]
 
     def __init__(self):
         self._loop = None
         self._client = None
+        self._connecting = None  # the client being made, for all who need it
         self._device = None  # the device-code login in progress
         self._qr = None  # the QR login in progress: (PassportClient, QrSession)
         self._radio = {}  # radio id -> {"session", "batch"} of its rotor session
@@ -316,8 +327,17 @@ class Yandex:
         return saved
 
     async def _api(self):
+        """The client, made once however many ask for it at the same time."""
         if self._client is not None:
             return self._client
+        if self._connecting is None:
+            self._connecting = asyncio.ensure_future(self._connect())
+        try:
+            return await self._connecting
+        finally:
+            self._connecting = None
+
+    async def _connect(self):
         from yandex_music import ClientAsync
         from yandex_music.exceptions import UnauthorizedError
 
@@ -347,7 +367,7 @@ class Yandex:
             {"id": "wave", "title": "Моя волна"},
             {"id": "mine", "title": "Моя коллекция"},
             {"id": "feed", "title": "Для вас"},
-            {"id": "chart", "title": "Чарт"},
+            {"id": "chart", "title": "Чарт", "list": "chart"},
             {"id": "new_releases", "title": "Новые релизы"},
             {"id": "new_playlists", "title": "Новые плейлисты"},
             {"id": "tag:top", "title": "Лучшее"},
@@ -374,8 +394,9 @@ class Yandex:
     async def _playlists_of_mine(self):
         """One's own playlists, then the ones one likes."""
         api = await self._api()
-        own = await api.users_playlists_list() or []
-        liked = [like.playlist for like in await api.users_likes_playlists() or []]
+        own, likes = await asyncio.gather(api.users_playlists_list(),
+                                          api.users_likes_playlists())
+        own, liked = own or [], [like.playlist for like in likes or []]
         return _some(map(_playlist, own + liked))
 
     async def _albums_of_mine(self):
@@ -384,7 +405,9 @@ class Yandex:
 
     def _mine(self):
         async def get():
-            return await self._playlists_of_mine() + await self._albums_of_mine()
+            playlists, albums = await asyncio.gather(self._playlists_of_mine(),
+                                                     self._albums_of_mine())
+            return playlists + albums
 
         return get()
 
@@ -481,7 +504,10 @@ class Yandex:
             elif collection_id.startswith("playlist:"):
                 uid, kind = collection_id.split(":")[1:3]
                 pl = await api.users_playlists(kind, user_id=uid)
-                ids = [t.track_id for t in (pl.tracks or [])[:LIST_MAX]] if pl else []
+                short = (pl.tracks or [])[:LIST_MAX] if pl else []
+                if short and all(t.track for t in short):
+                    return _tracks(t.track for t in short)  # they came with the list
+                ids = [t.track_id for t in short]
             elif collection_id.startswith("album:"):
                 album = await api.albums_with_tracks(collection_id.split(":", 1)[1])
                 return _tracks(t for volume in (album.volumes or []) for t in volume) if album else []
@@ -531,10 +557,12 @@ class Yandex:
 
         return self._run(get())
 
-    def stream_url(self, track):
+    def stream_url(self, track, quality="low"):
+        quality, codecs = QUALITY.get(quality, QUALITY["low"])
+
         async def get():
             api = await self._api()
-            info = await api.tracks_file_info(track["id"], quality=QUALITY, codecs=CODECS,
+            info = await api.tracks_file_info(track["id"], quality=quality, codecs=codecs,
                                               transport="raw")
             if not info or not info.download_info or not info.download_info.url:
                 raise RuntimeError("no stream for this track")

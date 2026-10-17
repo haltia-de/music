@@ -13,14 +13,17 @@ SOURCE has:
                             success
   logout()
   account()                 the account's name, or ""
-  home()                    [{"id", "title"}]: the rows of the first page
+  home()                    [{"id", "title"}]: the rows of the first page; a
+                            row of tracks may name the "list" they come from
   home_row(row_id)          the items of a row
   browse(folder_id)         the items of a folder; "" is the top one
   tracks(list_id)           the tracks of a list
   radio_next(radio_id, last_track)
                             the next few tracks of a radio
   search(query)             tracks, best first
-  stream_url(track)         a URL the player can open
+  stream_url(track, quality)
+                            a URL the player can open, in one of qualities
+  qualities                 [(id, title, hint)], the lowest first
   feedback(radio_id, event, track, seconds)
                             optional: "start", "finish" or "skip" of a radio
                             track, so the service learns what one likes

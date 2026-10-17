@@ -54,20 +54,44 @@ mpv property/event callbacks in `Player`.
 ### Navigation
 
 `self.views` is a stack: the section root first (`home` or `browse`, chosen by the header buttons),
-then what was opened (`browse` folder, `list`, `search`, `queue`); `render()` redraws the body for the
-top view and ← pops. Loaded items are cached in the view dict, home rows in `self.home_items`.
-`self.gen` increments on every render; async callbacks capture it and drop their result if the page
-changed meanwhile (the widgets they would touch are destroyed).
+then what was opened (`browse` folder, `list`, `search`, `radio`). Each view dict owns its page (a
+`ScrolledWindow` in `self.stack`) and widgets (`list`, `note`, `play`, `shown`, `hearts`) while
+`alive`; ← destroys only the top page and shows the one below as it was. Both roots stay built in
+`self.roots`. Async callbacks check `view["alive"]` before touching widgets.
+
+A tap only opens (cards, folders, radios); playback starts only from a track row or «▶ Слушать».
+A track card on the home page opens its row's list (`row["list"]`) scrolled to that track.
+
+### Settings
+
+The gear opens a `settings` view. Settings live in `~/.config/b8k/music.conf`, section `[music]`
+(`load_setting`/`save_setting`, the same shape as b8k-max's `max.conf`). `quality` is one of the
+source's `qualities` ids, the lowest by default, and is passed to `stream_url(track, quality)`; it
+applies from the next track.
+
+### Caching
+
+- `fetch(what, arg, show)` is the one way to ask the source for data: it calls `show` at once with
+  the kept answer from `self.data`, re-asks the source when the answer is older than `FRESH` (or on
+  `force`), and calls `show` again only if the answer changed. So `show` callbacks must be safe to
+  run twice. `self.data` is saved to `~/.cache/b8k-music/data.json` (latest `KEEP`), deleted on logout.
+- After a change on the service (a like), `forget()` the affected keys.
+- `Covers` decodes in worker pools (disk and network separate) and keeps `PIXBUFS` decoded covers in
+  an LRU; the GTK thread never decodes images.
+- In `sources/yandex.py`, `_api()` shares one connect between concurrent callers; keep new calls
+  going through it.
 
 ### Playback state
 
-- `self.queue` is what plays; `self.shown` is what the list displays. For a radio they are the
-  *same list object* (`self.shown is self.queue`), so `_radio_more` extending the queue extends the
-  list; `fill()` stores the list without copying on purpose.
+- `self.queue` is what plays; a view's `shown` is what its list displays. On the radio page
+  (`self.radio_view`) they are the *same list object* (`view["shown"] is self.queue`), so
+  `_radio_more` extending the queue extends the list; `fill()` stores the list without copying on
+  purpose.
 - Tapping a track in a list copies the list's tracks into a new queue and drops the radio.
-- Opening a radio item starts it and pushes a `queue` view showing its growing queue. It fetches
-  more via `radio_next` when `RADIO_AHEAD` tracks remain, and sends start/finish/skip feedback.
-- Likes: `self.liked` (track ids) loaded once via `src.liked()`; hearts update optimistically and
+- «▶ Слушать» on a radio page starts it (`start_radio`); the page then shows its growing queue. It
+  fetches more via `radio_next` when `RADIO_AHEAD` tracks remain, and sends start/finish/skip
+  feedback.
+- Likes: `self.liked` (track ids) via `fetch("liked")`; hearts update optimistically and
   revert if `src.like()` fails.
 - `set_playing()` owns the side effects of playing: `$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend`
   keeps the tablet from suspending (the shell's b8k-sleep reads it).
