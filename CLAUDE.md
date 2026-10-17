@@ -10,16 +10,16 @@ targets, Russian UI, playback continues with the window closed.
 
 There is no build or linter. Checks available:
 
-- `python3 -m unittest` — tests in `tests/` (playback, with stand-ins from `tests/fake.py`;
+- `python3 -m unittest` — tests in `tests/` (playback, answers, with stand-ins from `tests/fake.py`;
   no GTK, mpv or network). One test: `python3 -m unittest tests.test_playback.Radio`.
   Not installed on the tablet.
-- `python3 -m py_compile b8k-music playback.py sources/*.py` — syntax check.
+- `python3 -m py_compile b8k-music *.py sources/*.py` — syntax check.
 - `python3 b8k-music` — run from the checkout (finds `sources/` next to itself). Needs
   PyGObject, python-mpv/libmpv, qrcode, and `yandex_music` + `ya_passport_auth` importable
   (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/b8k-music` after an `install.sh` into a scratch ROOT).
   Without the tablet shell, `b8k_ui` is absent and the program falls back (no buzz, `ask()` always yes).
 - `sh install.sh [ROOT]` — installs into a root file system; the tablet shell's image build calls it.
-  Copies `playback.py` and `sources/` to `/usr/local/lib/b8k-music`; a new module next to them
+  Copies `answers.py`, `playback.py` and `sources/` to `/usr/local/lib/b8k-music`; a new module next to them
   needs a line there. Downloads pinned wheels (sha256-checked, cached in `$B8K_CACHE` or `.cache/`) and unpacks them
   next to the sources in `/usr/local/lib/b8k-music`. Bumping a library means updating both URL and sum
   in the `WHEELS` heredoc.
@@ -28,8 +28,8 @@ There is no build or linter. Checks available:
 
 - `b8k-music` — the window, one Python file: `Music(Gtk.Application)` (app id `b8k.Music`),
   `Player` (libmpv, sound only), `Covers` (cover cache in `~/.cache/b8k-music/`).
-- `playback.py` — `Session`, what plays (see Playback below). No GTK; its docstring is its
-  interface.
+- `playback.py` — `Session`, what plays (see Playback below); `answers.py` — `Answers`, the
+  service's answers kept (see Caching). No GTK; each docstring is its module's interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
   adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import
@@ -77,10 +77,11 @@ applies from the next track.
 
 ### Caching
 
-- `fetch(what, arg, show)` is the one way to ask the source for data: it calls `show` at once with
-  the kept answer from `self.data`, re-asks the source when the answer is older than `FRESH` (or on
-  `force`), and calls `show` again only if the answer changed. So `show` callbacks must be safe to
-  run twice. `self.data` is saved to `~/.cache/b8k-music/data.json` (latest `KEEP`), deleted on logout.
+- `self.answers.get(what, arg, show)` is the one way to ask the source for data: `show` runs at once
+  with the kept answer, the source is asked again when it is older than `FRESH` (or on `force`), and
+  `show` runs again only if the answer changed, so `show` callbacks must be safe to run twice.
+  `what` must be in `answers.READS`; a new read method of the source goes there. Kept in
+  `~/.cache/b8k-music/data.json` (latest `KEEP`); `reset()` on logout drops it and what is in flight.
 - After a change on the service (a like), `forget()` the affected keys.
 - `Covers` decodes in worker pools (disk and network separate) and keeps `PIXBUFS` decoded covers in
   an LRU; the GTK thread never decodes images.

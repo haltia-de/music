@@ -12,7 +12,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 lib=$root/usr/local/lib/b8k-music
 install -D -m 755 "$here/b8k-music" "$root/usr/local/bin/b8k-music"
 rm -rf "$lib"
-install -D -m 644 "$here/playback.py" "$lib/playback.py"
+for f in answers playback; do
+	install -D -m 644 "$here/$f.py" "$lib/$f.py"
+done
 for f in "$here"/sources/*.py; do
 	install -D -m 644 "$f" "$lib/sources/${f##*/}"
 done
