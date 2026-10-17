@@ -40,6 +40,7 @@ import threading
 import time
 import urllib.request
 from collections import OrderedDict
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 
 import gi
@@ -60,6 +61,7 @@ for path in (HERE, "/usr/local/lib/b8k-music"):
     if os.path.isdir(os.path.join(path, "sources")):
         sys.path.insert(0, path)
         break
+import playback  # noqa: E402
 import sources  # noqa: E402
 
 CACHE = os.path.expanduser("~/.cache/b8k-music")
@@ -69,7 +71,6 @@ FRESH = 15 * 60  # seconds an answer of the service is taken as it is
 KEEP = 300  # answers kept on disk, the latest
 PIXBUFS = 400  # decoded covers kept in memory
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
-RADIO_AHEAD = 2  # fetch more radio tracks when this few are left
 CARD = 160  # the cover of a card on the home page
 QR = 360
 
@@ -299,7 +300,9 @@ class Player:
             reason = getattr(data, "reason", None)
             # 0 is the end of the file; a new loadfile also ends the old one.
             if reason in (0, "eof", b"eof") or str(reason).endswith("EOF"):
-                GLib.idle_add(self.on_end)
+                GLib.idle_add(self.on_end, None)
+            elif reason in (4, "error", b"error") or str(reason).endswith("ERROR"):
+                GLib.idle_add(self.on_end, "поток оборвался")
 
     def play(self, url):
         self.mpv.play(url)
@@ -319,6 +322,12 @@ class Player:
             return self.mpv.time_pos or 0
         except Exception:
             return 0
+
+    def stop(self):
+        try:
+            self.mpv.stop()
+        except Exception:
+            pass
 
 
 class Music(Gtk.Application):
@@ -341,13 +350,7 @@ class Music(Gtk.Application):
         self.roots = {}
         self.liked = set()
         self.bar = None
-        self.player = None
-        self.queue = []
-        self.index = -1
-        self.radio = None  # the radio playing, or None
-        self.radio_view = None  # the page that shows it
-        self.duration = 0
-        self.playing = False
+        self.radio_view = None  # the page that shows the radio playing
         self.seeking = False
         self.win = None
         self.awake = None
@@ -355,6 +358,13 @@ class Music(Gtk.Application):
         if run:
             os.makedirs(os.path.join(run, "b8k-awake"), mode=0o700, exist_ok=True)
             self.awake = os.path.join(run, "b8k-awake", "%d.suspend" % os.getpid())
+        events = SimpleNamespace(changed=self.on_track, grew=self.on_grew,
+                                 playing=self.on_playing, failed=self.say)
+        self.session = playback.Session(
+            self.src, lambda: Player(self.session.ended, self.on_time, self.session.paused),
+            self.work, lambda sec, f: GLib.timeout_add(int(sec * 1000), lambda: (f(), False)[1]),
+            events, self.awake)
+        self.session.quality = self.quality
 
     # --- the service's answers, kept --------------------------------------------
     def load_data(self):
@@ -693,7 +703,7 @@ class Music(Gtk.Application):
         elif k == "radio":
             if self.radio_on(view):
                 self.radio_view = view
-                self.fill(view, self.queue)
+                self.fill(view, list(self.session.tracks))
             else:
                 # Its first tracks, shown as a list's are; they play only when asked.
                 self.say("Загружаю…", view)
@@ -829,10 +839,10 @@ class Music(Gtk.Application):
     def set_quality(self, view, quality):
         if quality == self.quality:
             return
-        self.quality = quality
+        self.quality = self.session.quality = quality
         save_setting("quality", quality)
         self.mark_quality(view)
-        if self.index >= 0:
+        if self.session.current:
             self.say("Новое качество — со следующего трека.", view)
 
     # --- the home page --------------------------------------------------------
@@ -921,12 +931,23 @@ class Music(Gtk.Application):
 
     # --- the lists --------------------------------------------------------------
     def fill(self, view, items):
-        # The very list, not a copy: a radio's list is its queue, which grows.
         view["shown"] = items
         view["hearts"] = []
+        clear(view["list"])
+        self.add_rows(view, items, 0)
+        if view["play"] is not None:
+            has_tracks = any(kind(t) == "track" for t in items)
+            view["play"].set_visible(has_tracks and not (view["kind"] == "radio"
+                                                         and self.radio_on(view)))
+        if view.get("more") is not None:
+            view["more"].set_visible(bool(items))
+        self.update_hearts(view)
+        self.mark_playing(view)
+
+    def add_rows(self, view, items, first):
+        """Rows for items, the first of them shown[first]."""
         lst = view["list"]
-        clear(lst)
-        for i, t in enumerate(items):
+        for i, t in enumerate(items, first):
             row = Gtk.ListBoxRow()
             row.track_index = i
             box = Gtk.Box(spacing=16)
@@ -957,17 +978,10 @@ class Music(Gtk.Application):
             row.add(box)
             lst.add(row)
         lst.show_all()
-        if view["play"] is not None:
-            has_tracks = any(kind(t) == "track" for t in items)
-            view["play"].set_visible(has_tracks and not (view["kind"] == "radio"
-                                                         and self.radio_on(view)))
-        if view.get("more") is not None:
-            view["more"].set_visible(bool(items))
-        self.update_hearts(view)
-        self.mark_playing(view)
 
     def radio_on(self, view):
-        return self.radio == view.get("id") and bool(self.queue)
+        return (view["kind"] == "radio" and self.session.radio == view.get("id")
+                and bool(self.session.tracks))
 
     def on_row(self, _list, row, view):
         i = row.track_index
@@ -975,21 +989,19 @@ class Music(Gtk.Application):
         if kind(item) != "track":
             self.open_item(item)
             return
-        if self.radio and view["shown"] is self.queue:
-            self.start(i)
-            return
         if view["kind"] == "radio":
             self.play_radio(view, i)
             return
         # A tap on a track plays the list's tracks from this one on.
         tracks = [t for t in view["shown"] if kind(t) == "track"]
-        self.play_list(tracks, tracks.index(item))
+        before = sum(1 for t in view["shown"][:i] if kind(t) == "track")
+        self.play_list(tracks, before)
 
     def open_views(self, view=None):
         return [view] if view else [v for v in self.views if v.get("alive")]
 
     def mark_playing(self, view=None):
-        current = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
+        current = self.session.current
         for v in self.open_views(view):
             if not v.get("list"):
                 continue
@@ -1017,8 +1029,7 @@ class Music(Gtk.Application):
             for btn, track in v.get("hearts", []):
                 self.set_heart(btn, track)
         if self.can_like:
-            current = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
-            self.set_heart(self.bar_heart, current)
+            self.set_heart(self.bar_heart, self.session.current)
 
     def toggle_like(self, track):
         if not track:
@@ -1064,12 +1075,12 @@ class Music(Gtk.Application):
         bar.pack_start(mid, True, True, 0)
         self.bar_heart = styled(Gtk.Button(label="♡"), "heart")
         self.bar_heart.set_valign(Gtk.Align.CENTER)
-        self.bar_heart.connect("clicked", lambda *_a: self.toggle_like(
-            self.queue[self.index] if 0 <= self.index < len(self.queue) else None))
+        self.bar_heart.connect("clicked", lambda *_a: self.toggle_like(self.session.current))
         self.bar_heart.set_no_show_all(not self.can_like)
         bar.pack_start(self.bar_heart, False, False, 0)
-        for label, cls, cb in (("⏮", "ctl", self.prev), ("▶", "ctl main", self.toggle),
-                               ("⏭", "ctl", self.next)):
+        for label, cls, cb in (("⏮", "ctl", self.session.prev),
+                               ("▶", "ctl main", self.session.toggle),
+                               ("⏭", "ctl", self.session.next)):
             btn = styled(Gtk.Button(label=label), *cls.split())
             btn.set_valign(Gtk.Align.CENTER)
             btn.connect("clicked", lambda *_a, f=cb: f())
@@ -1081,20 +1092,13 @@ class Music(Gtk.Application):
 
     def on_seek(self, *_a):
         self.seeking = False
-        if self.player:
-            self.player.seek(self.scale.get_value())
+        self.session.seek(self.scale.get_value())
         return False
 
     # --- playing ----------------------------------------------------------------
-    def ensure_player(self):
-        if self.player is None:
-            self.player = Player(self.on_end, self.on_time, self.on_pause)
-        return self.player
-
     def play_list(self, tracks, i):
-        self.radio, self.radio_view = None, None
-        self.queue = list(tracks)
-        self.start(i)
+        self.radio_view = None
+        self.session.play_list(tracks, i)
         for view in self.open_views():
             if view["kind"] == "radio":
                 view["play"].show()
@@ -1109,84 +1113,41 @@ class Music(Gtk.Application):
         self.fill(view, list(tracks))
 
     def play_radio(self, view, i):
-        """Play the radio of the page from its i-th track; its list becomes
-        the queue, the very list, so what comes next grows it."""
+        """Play the radio of the page from its i-th track; what comes next
+        is added to the page as it comes."""
         if self.radio_on(view):
-            self.start(i)
+            self.session.jump(i)
             return
         if not view["shown"]:
             return
-        self.radio, self.radio_view = view["id"], view
-        self.queue = view["shown"]
-        self.index = -1
+        self.radio_view = view
+        self.session.play_radio(view["id"], view["shown"], i)
         view["play"].hide()
-        self.start(i)
 
-    def start(self, i):
-        if not (0 <= i < len(self.queue)):
+    def on_track(self, track):
+        if track is None:
+            if self.bar:
+                self.bar.hide()
             return
-        prev = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
-        if prev and self.radio and self.playing:
-            played = self.player.time() if self.player else 0
-            threading.Thread(target=self.src.feedback,
-                             args=(self.radio, "skip", prev, played), daemon=True).start()
-        self.index = i
-        track = self.queue[i]
         self.bar.show()
         self.bar_title.set_text(track["title"])
         self.bar_artist.set_text(track["artist"])
-        self.duration = track.get("duration") or 0
-        self.scale.set_range(0, max(1, self.duration))
-        self.bar_len.set_text(mmss(self.duration))
+        duration = track.get("duration") or 0
+        self.scale.set_range(0, max(1, duration))
+        self.bar_len.set_text(mmss(duration))
         self.bar_pos.set_text("0:00")
         self.bar_cover.clear()
         self.covers.get(track.get("cover"), self.bar_cover, 96)
         self.mark_playing()
         self.update_hearts()
-        self.work(lambda t: self.src.stream_url(t, self.quality), track,
-                  lambda url, err, t=track: self._play(t, url, err))
-        if self.radio:
-            threading.Thread(target=self.src.feedback,
-                             args=(self.radio, "start", track, 0), daemon=True).start()
-            if len(self.queue) - i <= RADIO_AHEAD:
-                self.work(lambda _a, r=self.radio, last=track: self.src.radio_next(r, last),
-                          None, lambda tracks, err, r=self.radio: self._radio_more(r, tracks, err))
 
-    def _play(self, track, url, error):
-        if not (0 <= self.index < len(self.queue)) or self.queue[self.index] is not track:
-            return  # another track was chosen meanwhile
-        if error or not url:
-            self.say("Трек не играет: %s" % (error or "нет ссылки"))
-            GLib.timeout_add_seconds(2, lambda: (self.next(), False)[1])
-            return
-        try:
-            self.ensure_player().play(url)
-        except Exception as exc:
-            self.say("Нет проигрывателя (libmpv): %s" % exc)
-            return
-        self.set_playing(True)
-
-    def _radio_more(self, radio, tracks, error):
-        if error or not tracks or radio != self.radio:
-            return
-        known = {t["id"] for t in self.queue}
-        self.queue.extend(t for t in tracks if t["id"] not in known)
+    def on_grew(self, tracks):
         view = self.radio_view
-        if view and view.get("alive") and view["shown"] is self.queue:
-            self.fill(view, self.queue)
-
-    def on_end(self):
-        track = self.queue[self.index] if 0 <= self.index < len(self.queue) else None
-        if track and self.radio:
-            threading.Thread(target=self.src.feedback,
-                             args=(self.radio, "finish", track, self.duration),
-                             daemon=True).start()
-        if self.index + 1 < len(self.queue):
-            self.playing = False  # the end was not a skip
-            self.start(self.index + 1)
-        else:
-            self.set_playing(False)
-        return False
+        if view and view.get("alive") and self.radio_on(view):
+            first = len(view["shown"])
+            view["shown"].extend(tracks)
+            self.add_rows(view, tracks, first)
+            self.update_hearts(view)
 
     def on_time(self, value):
         if value is None:
@@ -1196,46 +1157,13 @@ class Music(Gtk.Application):
         self.bar_pos.set_text(mmss(value))
         return False
 
-    def on_pause(self, paused):
-        self.set_playing(not paused if paused is not None else False)
-        return False
-
-    def set_playing(self, on):
-        self.playing = on
-        self.play_btn.set_label("⏸" if on else "▶")
-        if self.awake:
-            try:
-                if on:
-                    open(self.awake, "w").close()
-                elif os.path.exists(self.awake):
-                    os.unlink(self.awake)
-            except OSError:
-                pass
-
-    def toggle(self):
-        if self.player and self.index >= 0:
-            self.player.toggle()
-
-    def next(self):
-        if self.index + 1 < len(self.queue):
-            self.start(self.index + 1)
-
-    def prev(self):
-        if self.player and self.player.time() > 5:
-            self.player.seek(0)
-        elif self.index > 0:
-            self.start(self.index - 1)
+    def on_playing(self, on):
+        if self.bar:
+            self.play_btn.set_label("⏸" if on else "▶")
 
     def stop(self):
-        if self.player:
-            try:
-                self.player.mpv.stop()
-            except Exception:
-                pass
-        self.queue, self.index, self.radio, self.radio_view = [], -1, None, None
-        self.set_playing(False)
-        if self.bar:
-            self.bar.hide()
+        self.session.stop()
+        self.radio_view = None
 
     def do_shutdown(self):
         if self.saving:
@@ -1254,7 +1182,8 @@ class Music(Gtk.Application):
             except Exception as exc:
                 sys.stderr.write("b8k-music: %s\n" % exc)
                 res, err = None, exc
-            GLib.idle_add(lambda: (done(res, err), False)[1])
+            if done:
+                GLib.idle_add(lambda: (done(res, err), False)[1])
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -8,22 +8,28 @@ targets, Russian UI, playback continues with the window closed.
 
 ## Commands
 
-There is no build, test suite or linter. Checks available:
+There is no build or linter. Checks available:
 
-- `python3 -m py_compile b8k-music sources/*.py` — syntax check.
+- `python3 -m unittest` — tests in `tests/` (playback, with stand-ins from `tests/fake.py`;
+  no GTK, mpv or network). One test: `python3 -m unittest tests.test_playback.Radio`.
+  Not installed on the tablet.
+- `python3 -m py_compile b8k-music playback.py sources/*.py` — syntax check.
 - `python3 b8k-music` — run from the checkout (finds `sources/` next to itself). Needs
   PyGObject, python-mpv/libmpv, qrcode, and `yandex_music` + `ya_passport_auth` importable
   (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/b8k-music` after an `install.sh` into a scratch ROOT).
   Without the tablet shell, `b8k_ui` is absent and the program falls back (no buzz, `ask()` always yes).
 - `sh install.sh [ROOT]` — installs into a root file system; the tablet shell's image build calls it.
-  Downloads pinned wheels (sha256-checked, cached in `$B8K_CACHE` or `.cache/`) and unpacks them
+  Copies `playback.py` and `sources/` to `/usr/local/lib/b8k-music`; a new module next to them
+  needs a line there. Downloads pinned wheels (sha256-checked, cached in `$B8K_CACHE` or `.cache/`) and unpacks them
   next to the sources in `/usr/local/lib/b8k-music`. Bumping a library means updating both URL and sum
   in the `WHEELS` heredoc.
 
 ## Architecture
 
-- `b8k-music` — the whole app, one Python file: `Music(Gtk.Application)` (app id `b8k.Music`),
+- `b8k-music` — the window, one Python file: `Music(Gtk.Application)` (app id `b8k.Music`),
   `Player` (libmpv, sound only), `Covers` (cover cache in `~/.cache/b8k-music/`).
+- `playback.py` — `Session`, what plays (see Playback below). No GTK; its docstring is its
+  interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
   adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import
@@ -47,8 +53,8 @@ There is no build, test suite or linter. Checks available:
 ### Threading rule
 
 Source methods block on the network. Call them through `Music.work(func, arg, done)`: `func` runs in
-a thread, `done(result, error)` runs on the GTK main loop. Fire-and-forget calls (`feedback`) use a
-bare daemon thread. Every GTK touch from another thread goes through `GLib.idle_add`, including
+a thread, `done(result, error)` runs on the GTK main loop; `done` may be None for fire-and-forget
+calls (`feedback`). Every GTK touch from another thread goes through `GLib.idle_add`, including
 mpv property/event callbacks in `Player`.
 
 ### Navigation
@@ -81,25 +87,29 @@ applies from the next track.
 - In `sources/yandex.py`, `_api()` shares one connect between concurrent callers; keep new calls
   going through it.
 
-### Playback state
+### Playback
 
-- `self.queue` is what plays; a view's `shown` is what its list displays. On the radio page
-  (`self.radio_view`) they are the *same list object* (`view["shown"] is self.queue`), so
-  `_radio_more` extending the queue extends the list; `fill()` stores the list without copying on
-  purpose.
-- Tapping a track in a list copies the list's tracks into a new queue and drops the radio.
+`self.session` (`playback.Session`) owns the queue, the radio, its growth, start/finish/skip
+feedback and the awake file; `Music` only calls it (`play_list`, `play_radio`, `jump`, the bar's
+buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). `Player` reports to it
+(`ended(error)`, `paused`). Change playback rules there, with a test in `tests/test_playback.py`.
+
+- The session keeps its own copy of the tracks. The radio page (`self.radio_view`) mirrors it:
+  `on_grew` appends rows and `shown` entries, so row positions equal queue positions.
+  `radio_on(view)` is "this radio page's radio plays".
 - A radio page loads the radio's first batch (`radio_next(id, None)`, which opens a rotor session)
-  and shows it like a list, without playing. «▶ Слушать» or a tap on a track (`play_radio`) makes
-  that very list the queue; it then grows via `radio_next` when `RADIO_AHEAD` tracks remain, and
-  start/finish/skip feedback goes to the session. A radio already playing shows its queue instead.
+  and shows it like a list, without playing. «▶ Слушать» or a tap on a track plays it; it grows via
+  `radio_next(id, last track of the queue)` when `RADIO_AHEAD` tracks remain, one request at a time.
+- Leaving a track that played its sound, paused or not, is a skip; playing to the end is a finish.
+  A track without a stream (or an mpv error) goes quiet and gives way after `GIVE_WAY` seconds,
+  unless another was chosen.
 - Likes: `self.liked` (track ids) via `fetch("liked")`; hearts update optimistically and
   revert if `src.like()` fails.
-- `set_playing()` owns the side effects of playing: `$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend`
-  keeps the tablet from suspending (the shell's b8k-sleep reads it).
+- `$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend` exists while music plays; it keeps the tablet from
+  suspending (the shell's b8k-sleep reads it).
 - Closing the window (the shell's «Закрыть» sends a toplevel close) stops the music and quits; music
   keeps playing only while the window is open behind other programs. This replaced an earlier
   hide-on-close, which left music playing after «Закрыть».
-- Stale async results are dropped by identity checks (`_play` compares `self.queue[self.index] is track`).
 
 ### Layout constraint
 
