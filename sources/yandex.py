@@ -37,6 +37,8 @@ QUALITY = {
 LIST_MAX = 100
 ROW_MAX = 20
 # Playlists the service keeps by itself that are no use here.
+SEARCH_LISTS = 10  # playlists a search shows
+SEARCH_FIRST = 3  # tracks shown before them, unless a playlist is the best match
 HIDDEN = {"Распознано"}
 
 # The modes of Моя волна: id after "#", name, the rotor seed it adds, its sign.
@@ -120,6 +122,17 @@ def _item(kind, id_, title, subtitle="", cover="", glyph=""):
     return item
 
 
+def _count(n):
+    """1 трек, 2 трека, 5 треков."""
+    if n % 10 == 1 and n % 100 != 11:
+        word = "трек"
+    elif 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        word = "трека"
+    else:
+        word = "треков"
+    return "%d %s" % (n, word)
+
+
 def _playlist(pl):
     if pl is None or (pl.title or "") in HIDDEN:
         return None
@@ -127,7 +140,7 @@ def _playlist(pl):
     cover = pl.cover
     uri = (getattr(cover, "uri", None) or (getattr(cover, "items_uri", None) or [None])[0]
            if cover else None) or pl.og_image
-    count = "%d треков" % pl.track_count if pl.track_count else ""
+    count = _count(pl.track_count) if pl.track_count else ""
     return _item("list", "playlist:%s:%s" % (uid, pl.kind), pl.title or "", count, _cover(uri))
 
 
@@ -550,11 +563,18 @@ class Yandex:
         return self._run(get())
 
     def search(self, query):
+        """Tracks and playlists. Playlists come first when the service takes
+        one for the best match, else after the first few tracks."""
         async def get():
             api = await self._api()
-            res = await api.search(query, type_="track")
-            found = res.tracks.results if res and res.tracks else []
-            return _tracks(found[:40])
+            res, more = await asyncio.gather(api.search(query, type_="all"),
+                                             api.search(query, type_="playlist"))
+            tracks = _tracks(res.tracks.results if res and res.tracks else [])
+            found = more.playlists.results if more and more.playlists else []
+            playlists = _some(_playlist(p) for p in found[:SEARCH_LISTS])
+            if res and res.best and res.best.type == "playlist":
+                return playlists + tracks
+            return tracks[:SEARCH_FIRST] + playlists + tracks[SEARCH_FIRST:]
 
         return self._run(get())
 

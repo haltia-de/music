@@ -512,7 +512,7 @@ class Music(Gtk.Application):
     def show_main(self):
         self.clear_page()
         row = Gtk.Box(spacing=12)
-        self.entry = styled(Gtk.Entry(placeholder_text="Найти трек или исполнителя"), "search")
+        self.entry = styled(Gtk.Entry(placeholder_text="Найти трек, исполнителя или плейлист"), "search")
         self.entry.connect("activate", lambda *_a: self.search())
         row.pack_start(self.entry, True, True, 0)
         self.find_btn = styled(Gtk.Button(label="Найти"), "find")
