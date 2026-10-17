@@ -343,18 +343,23 @@ class Music(Gtk.Application):
         row.pack_start(self.find_btn, False, False, 0)
         self.page.pack_start(row, False, False, 0)
 
+        # Tiles, note and tracks scroll together: anything tall outside the
+        # scrolled part keeps the window taller than the room the on-screen
+        # keyboard leaves, and the window then covers its top row.
+        self.scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.tiles = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
                                  max_children_per_line=4, min_children_per_line=4,
                                  row_spacing=12, column_spacing=12)
-        self.page.pack_start(self.tiles, False, False, 0)
+        body.pack_start(self.tiles, False, False, 0)
         self.note = Gtk.Label()
         self.note.get_style_context().add_class("note")
         self.note.set_line_wrap(True)
-        self.page.pack_start(self.note, False, False, 8)
-        self.scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        body.pack_start(self.note, False, False, 8)
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list.connect("row-activated", self.on_row)
-        self.scroll.add(self.list)
+        body.pack_start(self.list, False, False, 0)
+        self.scroll.add(body)
         self.page.pack_start(self.scroll, True, True, 0)
         self.page.show_all()
         self.win.set_focus(None)
