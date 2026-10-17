@@ -97,6 +97,10 @@ button.choice.current { background-color: #c4dcf7; }
 button.choice label.ttl { font-size: 24px; color: #2e3436; }
 button.choice label.sub { font-size: 19px; color: #5e5c64; }
 button.choice label.mark { font-size: 32px; color: #1c71d8; }
+.account { background-color: #f2f2f0; border-radius: 16px; padding: 12px 12px 12px 20px; }
+.account label.ttl { font-size: 24px; color: #2e3436; }
+.account label.sub { font-size: 19px; color: #5e5c64; }
+.account button.quiet { background-color: #e6e6e4; }
 label.section { font-size: 24px; font-weight: bold; color: #2e3436; }
 button.card { background-color: transparent; padding: 6px; }
 button.card:active { background-color: #c4dcf7; }
@@ -436,15 +440,12 @@ class Music(Gtk.Application):
         for btn in (self.back_btn, self.home_btn, self.browse_btn):
             btn.set_no_show_all(True)
             header.pack_start(btn)
-        self.out_btn = styled(Gtk.Button(label="Выйти"), "quiet")
-        self.out_btn.connect("clicked", lambda *_a: self.logout())
         self.gear = styled(Gtk.Button.new_from_icon_name("emblem-system-symbolic",
                                                          Gtk.IconSize.DIALOG), "nav")
         self.gear.set_tooltip_text("Настройки")
         self.gear.connect("clicked", lambda *_a: self.open_settings())
-        for btn in (self.out_btn, self.gear):
-            btn.set_no_show_all(True)
-            header.pack_end(btn)
+        self.gear.set_no_show_all(True)
+        header.pack_end(self.gear)
         self.win.set_titlebar(header)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -481,7 +482,7 @@ class Music(Gtk.Application):
         self.page.show_all()
 
     def show_nav(self, on):
-        for btn in (self.home_btn, self.browse_btn, self.out_btn, self.gear):
+        for btn in (self.home_btn, self.browse_btn, self.gear):
             btn.set_visible(on)
         self.back_btn.set_visible(on and len(self.views) > 1)
 
@@ -662,8 +663,16 @@ class Music(Gtk.Application):
             lst = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
             lst.connect("row-activated", self.on_row, view)
             box.pack_start(lst, False, False, 0)
-        view.update(page=scroll, box=box, note=note, list=lst, play=play, shown=[], hearts=[],
-                    alive=True)
+        more = None
+        if view["kind"] == "radio":
+            more = styled(Gtk.Label(label="Дальше радио подберёт новые треки само: они "
+                                          "появятся внизу списка, пока оно играет.", xalign=0),
+                          "note")
+            more.set_line_wrap(True)
+            more.set_no_show_all(True)
+            box.pack_start(more, False, False, 8)
+        view.update(page=scroll, box=box, note=note, list=lst, play=play, more=more, shown=[],
+                    hearts=[], alive=True)
         self.stack.add(scroll)
         scroll.show_all()
         self.load_view(view)
@@ -682,12 +691,14 @@ class Music(Gtk.Application):
             self.say("Загружаю…", view)
             self.fetch("home", None, lambda rows, err: self._home(view, rows, err))
         elif k == "radio":
-            if self.radio == view["id"]:
+            if self.radio_on(view):
                 self.radio_view = view
                 self.fill(view, self.queue)
             else:
-                view["play"].show()
-                self.say("Радио подбирает треки на ходу: нажмите «▶ Слушать».", view)
+                # Its first tracks, shown as a list's are; they play only when asked.
+                self.say("Загружаю…", view)
+                self.work(lambda r: self.src.radio_next(r, None), view["id"],
+                          lambda tracks, err: self._radio_first(view, tracks, err))
         elif view.get("items") is not None:
             self._items(view, view["items"], None)
         else:
@@ -760,7 +771,7 @@ class Music(Gtk.Application):
     def listen(self, view):
         """«▶ Слушать»: a list from its first track, or the radio."""
         if view["kind"] == "radio":
-            self.start_radio(view)
+            self.play_radio(view, 0)
             return
         tracks = [t for t in view["shown"] if kind(t) == "track"]
         if tracks:
@@ -772,10 +783,26 @@ class Music(Gtk.Application):
             self.push({"kind": "settings", "title": "Настройки"})
 
     def settings_page(self, view, box):
+        box.pack_start(styled(Gtk.Label(label="Аккаунт", xalign=0), "section"),
+                       False, False, 0)
+        row = styled(Gtk.Box(spacing=16), "account")
+        name = self.src.account()
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        text.set_valign(Gtk.Align.CENTER)
+        text.pack_start(styled(Gtk.Label(label=self.src.label, xalign=0), "ttl"), False, False, 0)
+        if name:
+            text.pack_start(styled(Gtk.Label(label=name, xalign=0), "sub"), False, False, 0)
+        row.pack_start(text, True, True, 0)
+        out = styled(Gtk.Button(label="Выйти"), "quiet")
+        out.set_valign(Gtk.Align.CENTER)
+        out.connect("clicked", lambda *_a: self.logout())
+        row.pack_end(out, False, False, 0)
+        box.pack_start(row, False, False, 0)
+        view["choices"] = []
         if not self.qualities:
             return
         box.pack_start(styled(Gtk.Label(label="Качество звука", xalign=0), "section"),
-                       False, False, 0)
+                       False, False, 8)
         choices = []
         for qid, title, hint in self.qualities:
             btn = styled(Gtk.Button(), "choice")
@@ -932,8 +959,10 @@ class Music(Gtk.Application):
         lst.show_all()
         if view["play"] is not None:
             has_tracks = any(kind(t) == "track" for t in items)
-            view["play"].set_visible(not self.radio_on(view) if view["kind"] == "radio"
-                                     else has_tracks)
+            view["play"].set_visible(has_tracks and not (view["kind"] == "radio"
+                                                         and self.radio_on(view)))
+        if view.get("more") is not None:
+            view["more"].set_visible(bool(items))
         self.update_hearts(view)
         self.mark_playing(view)
 
@@ -948,6 +977,9 @@ class Music(Gtk.Application):
             return
         if self.radio and view["shown"] is self.queue:
             self.start(i)
+            return
+        if view["kind"] == "radio":
+            self.play_radio(view, i)
             return
         # A tap on a track plays the list's tracks from this one on.
         tracks = [t for t in view["shown"] if kind(t) == "track"]
@@ -1067,31 +1099,28 @@ class Music(Gtk.Application):
             if view["kind"] == "radio":
                 view["play"].show()
 
-    def start_radio(self, view):
+    def _radio_first(self, view, tracks, error):
+        if not view.get("alive") or self.radio_on(view):
+            return
+        if error or not tracks:
+            self.say("Радио не загрузилось: нет связи?", view)
+            return
+        self.say("", view)
+        self.fill(view, list(tracks))
+
+    def play_radio(self, view, i):
+        """Play the radio of the page from its i-th track; its list becomes
+        the queue, the very list, so what comes next grows it."""
         if self.radio_on(view):
+            self.start(i)
+            return
+        if not view["shown"]:
             return
         self.radio, self.radio_view = view["id"], view
-        self.queue, self.index = [], -1
+        self.queue = view["shown"]
+        self.index = -1
         view["play"].hide()
-        self.say("Запускаю…", view)
-        self.work(lambda _a, r=view["id"]: self.src.radio_next(r, None), None,
-                  lambda tracks, err, r=view["id"]: self._radio_first(r, tracks, err))
-
-    def _radio_first(self, radio, tracks, error):
-        if radio != self.radio:
-            return  # another radio or list was chosen meanwhile
-        view = self.radio_view
-        if error or not tracks:
-            self.radio, self.radio_view = None, None
-            if view and view.get("alive"):
-                self.say("Радио не запустилось: нет связи?", view)
-                view["play"].show()
-            return
-        self.queue = list(tracks)
-        if view and view.get("alive"):
-            self.say("", view)
-            self.fill(view, self.queue)
-        self.start(0)
+        self.start(i)
 
     def start(self, i):
         if not (0 <= i < len(self.queue)):

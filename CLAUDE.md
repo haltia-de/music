@@ -88,9 +88,10 @@ applies from the next track.
   `_radio_more` extending the queue extends the list; `fill()` stores the list without copying on
   purpose.
 - Tapping a track in a list copies the list's tracks into a new queue and drops the radio.
-- «▶ Слушать» on a radio page starts it (`start_radio`); the page then shows its growing queue. It
-  fetches more via `radio_next` when `RADIO_AHEAD` tracks remain, and sends start/finish/skip
-  feedback.
+- A radio page loads the radio's first batch (`radio_next(id, None)`, which opens a rotor session)
+  and shows it like a list, without playing. «▶ Слушать» or a tap on a track (`play_radio`) makes
+  that very list the queue; it then grows via `radio_next` when `RADIO_AHEAD` tracks remain, and
+  start/finish/skip feedback goes to the session. A radio already playing shows its queue instead.
 - Likes: `self.liked` (track ids) via `fetch("liked")`; hearts update optimistically and
   revert if `src.like()` fails.
 - `set_playing()` owns the side effects of playing: `$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend`
