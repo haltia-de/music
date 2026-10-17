@@ -158,6 +158,7 @@ def _now():
 class Yandex:
     id = "yandex"
     label = "Яндекс Музыка"
+    likes_list = "likes"
     qualities = [
         ("low", "Экономное", "HE-AAC около 64 кбит/с: меньше всего трафика"),
         ("normal", "Обычное", "AAC около 192 кбит/с"),
@@ -380,7 +381,7 @@ class Yandex:
         if row_id == "wave":
             return self._waves()
         if row_id == "mine":
-            return [_item("list", "likes", "Мне нравится", glyph="♥")] + self._run(self._mine())
+            return [_item("list", self.likes_list, "Мне нравится", glyph="♥")] + self._run(self._mine())
         if row_id == "chart":
             return self.tracks("chart")[:ROW_MAX]
         return self.browse(row_id)[:ROW_MAX]
@@ -438,7 +439,7 @@ class Yandex:
                 return _some(_playlist(g.data) for g in (feed.generated_playlists or [])
                              if g.ready and g.data) if feed else []
             if folder_id == "collection":
-                return [_item("list", "likes", "Мне нравится", glyph="♥"),
+                return [_item("list", self.likes_list, "Мне нравится", glyph="♥"),
                         _item("folder", "playlists", "Мои плейлисты"),
                         _item("folder", "albums", "Мои альбомы", glyph="◎"),
                         _item("folder", "artists", "Мои исполнители", glyph="☻")]
@@ -494,7 +495,7 @@ class Yandex:
         async def get():
             api = await self._api()
             ids = []
-            if collection_id == "likes":
+            if collection_id == self.likes_list:
                 likes = await api.users_likes_tracks()
                 ids = [t.track_id for t in (likes.tracks if likes else [])[:LIST_MAX]]
             elif collection_id == "chart":

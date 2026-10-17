@@ -85,7 +85,8 @@ class Likes:
         (self.ids.add if on else self.ids.discard)(tid)
         self.recent[tid] = on
         self.answers.forget("liked", None)
-        self.answers.forget("tracks", "likes")
+        if getattr(self.src, "likes_list", None):
+            self.answers.forget("tracks", self.src.likes_list)
         if self.wanted.get(tid, on) != on:
             self._send(track)  # tapped again meanwhile
         else:

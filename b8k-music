@@ -332,8 +332,7 @@ class Music(Gtk.Application):
     def __init__(self):
         super().__init__(application_id="b8k.Music")
         self.sources = sources.load()
-        self.src = self.sources.get("yandex") or (next(iter(self.sources.values()))
-                                                 if self.sources else None)
+        self.src = self.sources[min(self.sources)] if self.sources else None
         self.covers = Covers()
         self.qualities = getattr(self.src, "qualities", None) or []
         self.quality = load_setting("quality", self.qualities[0][0] if self.qualities else "")
@@ -853,7 +852,8 @@ class Music(Gtk.Application):
             return image
         # A radio with a sign of its own gets a colour of its own, the same
         # each time; Мне нравится is red.
-        tint = "like" if item.get("id") == "likes" else (
+        likes_list = getattr(self.src, "likes_list", None)
+        tint = "like" if likes_list and item.get("id") == likes_list else (
             "c%d" % (sum(map(ord, item["id"])) % 6) if kind(item) == "radio" and item.get("glyph")
             else kind(item))
         box = styled(Gtk.Box(), "nocover", tint)

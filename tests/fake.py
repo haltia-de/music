@@ -8,9 +8,12 @@ def track(n):
 
 
 class Source:
-    """A service whose radio hands out batches; it records what it is told."""
+    """A service with a few lists and a radio that hands out batches; it
+    records what it is told. It keeps to the sources contract."""
 
     id, label = "fake", "Фейк"
+    qualities = [("low", "Экономное", ""), ("high", "Высокое", "")]
+    likes_list = "likes"
 
     def __init__(self, batches=(), feedback=True):
         self.batches = list(batches)  # each a list of tracks, or an Exception
@@ -19,6 +22,50 @@ class Source:
         self.broken = set()  # ids of tracks without a stream
         if not feedback:
             self.feedback = None
+
+    def logged_in(self):
+        return True
+
+    def login_start(self):
+        return {"code": "", "url": "", "qr": ""}
+
+    def login_wait(self):
+        return True
+
+    def logout(self):
+        pass
+
+    def account(self):
+        return "тест"
+
+    def home(self):
+        return [{"id": "lists", "title": "Списки"}, {"id": "hits", "title": "Хиты", "list": "hits"}]
+
+    def home_row(self, row_id):
+        if row_id == "hits":
+            return self.tracks("hits")
+        return [{"kind": "radio", "id": "r", "title": "Радио", "subtitle": "", "cover": "",
+                 "glyph": "∞"},
+                {"kind": "list", "id": self.likes_list, "title": "Мне нравится",
+                 "subtitle": "", "cover": ""}]
+
+    def browse(self, folder_id):
+        if folder_id == "":
+            return [{"kind": "folder", "id": "all", "title": "Всё", "subtitle": "",
+                     "cover": ""}]
+        return self.home_row("lists")
+
+    def tracks(self, list_id):
+        return [track(n) for n in range(1, 4)]
+
+    def search(self, query):
+        return [track(1)] + self.home_row("lists")
+
+    def liked(self):
+        return set()
+
+    def like(self, track, on):
+        pass
 
     def stream_url(self, track, quality):
         if track["id"] in self.broken:

@@ -5,7 +5,9 @@ about a new one (Звук, Apple Music, ...).
 
 SOURCE has:
   id, label                 "yandex", "Яндекс Музыка"
-  logged_in()               True when it has an account to play from
+  logged_in()               True when it has an account to play from; like
+                            account(), it reads no network and may be called
+                            from the window
   login_start()             {"code", "url", "qr"}: the code to enter at url,
                             and a URL to show as a QR code to scan; either
                             may be "" when the service has no such way in
@@ -19,20 +21,25 @@ SOURCE has:
   browse(folder_id)         the items of a folder; "" is the top one
   tracks(list_id)           the tracks of a list
   radio_next(radio_id, last_track)
-                            the next few tracks of a radio
-  search(query)             tracks, best first
+                            the next few tracks of a radio, after last_track;
+                            with None it starts the radio anew
+  search(query)             items of any kind, best first
   stream_url(track, quality)
                             a URL the player can open, in one of qualities
+                            ("" when there are none)
+Optional:
   qualities                 [(id, title, hint)], the lowest first
   feedback(radio_id, event, track, seconds)
-                            optional: "start", "finish" or "skip" of a radio
-                            track, so the service learns what one likes
-  liked(), like(track, on)  optional: the ids of the tracks one likes, and
-                            liking a track or no longer
+                            "start", "finish" or "skip" of a radio track, so
+                            the service learns what one likes
+  liked(), like(track, on)  the ids of the tracks one likes (a set or a
+                            list), and liking a track or no longer
+  likes_list                the id of the list of the tracks one likes
 
 An item is a dict with a kind: "track", or "list", "radio" or "folder"
-with id, title, subtitle and cover (an image URL or ""). A list opens to
-its tracks, a radio plays on and on, a folder holds more items.
+with id, title, subtitle, cover (an image URL or "") and optionally glyph,
+a sign shown when there is no cover. A list opens to its tracks, a radio
+plays on and on, a folder holds more items.
 
 A track is a dict: kind "track", source, id, title, artist, duration
 (seconds or None), cover.
@@ -42,6 +49,9 @@ A source may block (network): b8k-music calls it from a worker thread.
 import importlib
 import pkgutil
 import sys
+
+REQUIRED = ("id", "label", "logged_in", "login_start", "login_wait", "logout", "account",
+            "home", "home_row", "browse", "tracks", "radio_next", "search", "stream_url")
 
 
 def load():
@@ -54,6 +64,11 @@ def load():
             sys.stderr.write("b8k-music: source %s: %s\n" % (info.name, exc))
             continue
         src = getattr(mod, "SOURCE", None)
-        if src is not None:
-            found[src.id] = src
+        if src is None:
+            continue
+        missing = [name for name in REQUIRED if not hasattr(src, name)]
+        if missing:
+            sys.stderr.write("b8k-music: source %s lacks %s\n" % (info.name, ", ".join(missing)))
+            continue
+        found[src.id] = src
     return found

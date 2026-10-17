@@ -10,8 +10,8 @@ targets, Russian UI, playback continues with the window closed.
 
 There is no build or linter. Checks available:
 
-- `python3 -m unittest` — tests in `tests/` (playback, answers, likes, with stand-ins from `tests/fake.py`;
-  no GTK, mpv or network). One test: `python3 -m unittest tests.test_playback.Radio`.
+- `python3 -m unittest` — tests in `tests/` (playback, answers, likes, the source contract;
+  stand-ins from `tests/fake.py`; no GTK, mpv or network). One test: `python3 -m unittest tests.test_playback.Radio`.
   Not installed on the tablet.
 - `python3 -m py_compile b8k-music *.py sources/*.py` — syntax check.
 - `python3 b8k-music` — run from the checkout (finds `sources/` next to itself). Needs
@@ -32,8 +32,11 @@ There is no build or linter. Checks available:
   service's answers kept (see Caching); `likes.py` — `Likes`, the hearts. No GTK; each docstring is its module's interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
-  adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import
-  is skipped, never fatal. Adding a service = adding a file there, no change to `b8k-music`.
+  adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import,
+  or whose `SOURCE` lacks a name in `sources.REQUIRED`, is skipped, never fatal. The app uses the
+  first source by id and knows nothing service-specific: what it needs from a service goes into the
+  contract (e.g. `likes_list`), and `tests/fake.py`'s `Source` keeps to it too
+  (`tests/test_contract.py`). Adding a service = adding a file there, no change to `b8k-music`.
 - `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they share one event loop on a
   daemon thread (`_Loop`) and every public method blocks on its result. Account (tokens) in
   `~/.local/share/b8k-music/yandex.json`, mode 600, written atomically via `.new` + `os.replace`.
@@ -118,6 +121,10 @@ buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). `Pla
 
 Everything under the search row lives inside one `ScrolledWindow`. Anything tall outside it makes the
 window taller than the room the on-screen keyboard leaves and hides the top row (see `show_main`).
+
+## Decisions
+
+`docs/adr/` records what was weighed and turned down; read it before proposing a restructuring.
 
 ## Conventions
 
