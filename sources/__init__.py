@@ -6,23 +6,33 @@ about a new one (Звук, Apple Music, ...).
 SOURCE has:
   id, label                 "yandex", "Яндекс Музыка"
   logged_in()               True when it has an account to play from
-  login_start()             {"code": ..., "url": ...}: the code to enter at url
-  login_wait()              blocks until that code is confirmed; True on success
+  login_start()             {"code", "url", "qr"}: the code to enter at url,
+                            and a URL to show as a QR code to scan; either
+                            may be "" when the service has no such way in
+  login_wait()              blocks until one of them is confirmed; True on
+                            success
   logout()
   account()                 the account's name, or ""
-  collections()             [{"id", "title", "radio": bool}]: what the first
-                            page offers (a radio plays on and on)
-  tracks(collection_id)     the tracks of a collection that is not a radio
-  radio_next(collection_id, last_track)
+  home()                    [{"id", "title"}]: the rows of the first page
+  home_row(row_id)          the items of a row
+  browse(folder_id)         the items of a folder; "" is the top one
+  tracks(list_id)           the tracks of a list
+  radio_next(radio_id, last_track)
                             the next few tracks of a radio
   search(query)             tracks, best first
   stream_url(track)         a URL the player can open
-  feedback(collection_id, event, track, seconds)
+  feedback(radio_id, event, track, seconds)
                             optional: "start", "finish" or "skip" of a radio
                             track, so the service learns what one likes
+  liked(), like(track, on)  optional: the ids of the tracks one likes, and
+                            liking a track or no longer
 
-A track is a dict: source, id, title, artist, duration (seconds or None),
-cover (an image URL or "").
+An item is a dict with a kind: "track", or "list", "radio" or "folder"
+with id, title, subtitle and cover (an image URL or ""). A list opens to
+its tracks, a radio plays on and on, a folder holds more items.
+
+A track is a dict: kind "track", source, id, title, artist, duration
+(seconds or None), cover.
 
 A source may block (network): b8k-music calls it from a worker thread.
 """

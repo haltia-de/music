@@ -3,7 +3,8 @@
 # Install b8k-music into a root file system: sh install.sh [ROOT]
 # (ROOT empty or / for this system). The tablet shell's build runs it for
 # its image. It needs Python 3 with PyGObject (GTK 3), python-mpv with
-# libmpv, aiohttp, aiofiles, yarl, requests and typing-extensions.
+# libmpv, aiohttp, aiofiles, yarl, requests and typing-extensions, and
+# qrcode for signing in by a QR code.
 set -eu
 root=${1:-}
 root=${root%/}

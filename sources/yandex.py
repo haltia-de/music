@@ -1,16 +1,25 @@
 # SPDX-License-Identifier: GPL-2.0
 """Яндекс Музыка through yandex-music (MarshalX) and, for signing in,
-ya-passport-auth (the OAuth device flow: a short code entered at
-ya.ru/device; the refresh token it brings renews the access silently).
+ya-passport-auth: a QR code scanned with the phone, or a short code entered
+at ya.ru/device (the OAuth device flow, whose refresh token renews the
+access silently), whichever is confirmed first.
 
 Both libraries are asyncio; they run on one event loop in a thread of
 their own, and every method here waits for its result, so the program
 calls them from worker threads like any blocking source.
 
+The first page and the folders follow the Yandex Music provider of Music
+Assistant: Моя волна and its modes, Для вас, the chart, new releases and
+playlists, picks by mood and activity; the folders hold the collection,
+the radio stations by genre, mood, activity and era, and the picks.
+A radio is a rotor session: its seeds are the station and, for a mode of
+Моя волна, the mode's setting.
+
 The account is kept in ~/.local/share/b8k-music/yandex.json (mode 600).
 Streams are the plain (not encrypted) AAC or MP3 of /get-file-info.
 """
 import asyncio
+import datetime
 import json
 import os
 import threading
@@ -21,6 +30,48 @@ WAVE = "user:onyourwave"
 QUALITY = "nq"
 CODECS = ["aac-mp4", "aac", "mp3", "he-aac", "he-aac-mp4"]
 LIST_MAX = 100
+ROW_MAX = 20
+# Playlists the service keeps by itself that are no use here.
+HIDDEN = {"Распознано"}
+
+# The modes of Моя волна: id after "#", name, the rotor seed it adds, its sign.
+MODES = [
+    ("favorite", "Любимое", "settingDiversity:favorite", "♥"),
+    ("discover", "Незнакомое", "settingDiversity:discover", "✦"),
+    ("popular", "Популярное", "settingDiversity:popular", "★"),
+    ("active", "Бодрое", "settingMoodEnergy:active", "⚡"),
+    ("fun", "Весёлое", "settingMoodEnergy:fun", "☺"),
+    ("calm", "Спокойное", "settingMoodEnergy:calm", "☾"),
+    ("sad", "Грустное", "settingMoodEnergy:sad", "☂"),
+    ("russian", "Русское", "settingLanguage:russian", "Ру"),
+    ("not_russian", "Иностранное", "settingLanguage:not-russian", "En"),
+    ("without_words", "Без слов", "settingLanguage:without-words", "♫"),
+]
+SEEDS = {m[0]: m[2] for m in MODES}
+
+# Station kinds of the radio folder, in order.
+STATIONS = [("genre", "Жанры"), ("mood", "Настроение"), ("activity", "Занятие"),
+            ("epoch", "Эпоха")]
+
+# Playlist tags (the picks), by category.
+TAGS = [
+    ("mood", "Настроение", [("chill", "Чилл"), ("sad", "Грусть"), ("romantic", "Романтика"),
+                            ("party", "Вечеринка"), ("relax", "Отдых"),
+                            ("in the mood", "В настроении")]),
+    ("activity", "Занятие", [("workout", "Тренировка"), ("focus", "Сосредоточиться"),
+                             ("morning", "Утро"), ("evening", "Вечер"),
+                             ("driving", "За рулём"), ("background", "Фоном")]),
+    ("era", "Эпоха", [("80s", "80-е"), ("90s", "90-е"), ("2000s", "2000-е"),
+                      ("retro", "Ретро")]),
+    ("genres", "Жанры", [("rock", "Рок"), ("jazz", "Джаз"), ("classical", "Классика"),
+                         ("electronic", "Электроника"), ("rnb", "R&B"),
+                         ("hiphop", "Хип-хоп"), ("top", "Лучшее"),
+                         ("newbies", "Новые имена")]),
+]
+TAG_NAMES = {slug: name for _c, _n, tags in TAGS for slug, name in tags}
+SEASONS = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring",
+           6: "summer", 7: "summer", 8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
+SEASON_NAMES = {"winter": "Зима", "spring": "Весна", "summer": "Лето", "autumn": "Осень"}
 
 
 class _Loop:
@@ -34,21 +85,69 @@ class _Loop:
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
 
 
+def _cover(uri):
+    return "https://" + uri.replace("%%", "200x200") if uri else ""
+
+
 def _track(t):
     if t is None or not getattr(t, "available", True):
         return None
     artists = ", ".join(a.name for a in (t.artists or []) if a.name)
-    cover = ""
-    if t.cover_uri:
-        cover = "https://" + t.cover_uri.replace("%%", "200x200")
     return {
+        "kind": "track",
         "source": "yandex",
         "id": str(t.id),
         "title": t.title or "",
         "artist": artists,
         "duration": (t.duration_ms or 0) / 1000 or None,
-        "cover": cover,
+        "cover": _cover(t.cover_uri),
     }
+
+
+def _tracks(found):
+    return [x for x in map(_track, found) if x]
+
+
+def _item(kind, id_, title, subtitle="", cover="", glyph=""):
+    item = {"kind": kind, "id": id_, "title": title, "subtitle": subtitle, "cover": cover}
+    if glyph:
+        item["glyph"] = glyph
+    return item
+
+
+def _playlist(pl):
+    if pl is None or (pl.title or "") in HIDDEN:
+        return None
+    uid = pl.owner.uid if pl.owner else pl.uid
+    cover = pl.cover
+    uri = (getattr(cover, "uri", None) or (getattr(cover, "items_uri", None) or [None])[0]
+           if cover else None) or pl.og_image
+    count = "%d треков" % pl.track_count if pl.track_count else ""
+    return _item("list", "playlist:%s:%s" % (uid, pl.kind), pl.title or "", count, _cover(uri))
+
+
+def _album(a):
+    if a is None:
+        return None
+    artists = ", ".join(x.name for x in (a.artists or []) if x.name)
+    sub = " · ".join(str(x) for x in (artists, a.year) if x)
+    return _item("list", "album:%s" % a.id, a.title or "", sub, _cover(a.cover_uri))
+
+
+def _artist(a):
+    if a is None:
+        return None
+    return _item("folder", "artist:%s" % a.id, a.name or "", "",
+                 _cover(a.cover.uri if a.cover else None))
+
+
+def _some(items):
+    return [x for x in items if x]
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(
+        timespec="milliseconds").replace("+00:00", "Z")
 
 
 class Yandex:
@@ -58,8 +157,10 @@ class Yandex:
     def __init__(self):
         self._loop = None
         self._client = None
-        self._session = None  # the device-code login in progress
-        self._batch = {}  # radio station -> batch id, for feedback
+        self._device = None  # the device-code login in progress
+        self._qr = None  # the QR login in progress: (PassportClient, QrSession)
+        self._radio = {}  # radio id -> {"session", "batch"} of its rotor session
+        self._stations = None
 
     # --- the account ------------------------------------------------------
     @staticmethod
@@ -78,10 +179,10 @@ class Yandex:
             json.dump(data, fh)
         os.replace(ACCOUNT + ".new", ACCOUNT)
 
-    def _run(self, coro):
+    def _run(self, coro, timeout=120):
         if self._loop is None:
             self._loop = _Loop()
-        return self._loop.run(coro)
+        return self._loop.run(coro, timeout)
 
     def logged_in(self):
         saved = self._saved()
@@ -95,31 +196,83 @@ class Yandex:
         from ya_passport_auth import PassportClient
 
         async def start():
-            async with PassportClient.create() as client:
-                return await client.start_device_login(device_name="B8000-H")
+            await self._drop_qr()
+            device = qr = None
+            try:
+                async with PassportClient.create() as client:
+                    device = await client.start_device_login(device_name="B8000-H")
+            except Exception:
+                pass
+            # The QR session lives in the client's cookies: it stays open
+            # until login_wait is done with it.
+            client = PassportClient()
+            try:
+                qr = (client, await client.start_qr_login())
+            except Exception:
+                await client.close()
+            if device is None and qr is None:
+                raise RuntimeError("no way to sign in")
+            return device, qr
 
-        self._session = self._run(start())
-        return {"code": self._session.user_code, "url": self._session.verification_url}
+        self._device, self._qr = self._run(start())
+        out = {"code": "", "url": "", "qr": ""}
+        if self._device:
+            out["code"], out["url"] = self._device.user_code, self._device.verification_url
+        if self._qr:
+            out["qr"] = self._qr[1].qr_url
+        return out
+
+    async def _drop_qr(self):
+        if self._qr:
+            await self._qr[0].close()
+            self._qr = None
 
     def login_wait(self):
         from ya_passport_auth import PassportClient
 
-        session = self._session
-        if session is None:
+        device, qr = self._device, self._qr
+        if device is None and qr is None:
             return False
 
-        async def wait():
+        async def by_device():
             async with PassportClient.create() as client:
-                creds = await client.poll_device_until_confirmed(session)
-                login = ""
-                try:
+                return await client.poll_device_until_confirmed(device)
+
+        async def wait():
+            tasks = []
+            if device:
+                tasks.append(asyncio.ensure_future(by_device()))
+            if qr:
+                tasks.append(asyncio.ensure_future(
+                    qr[0].poll_qr_until_confirmed(qr[1], total_timeout=600)))
+            creds = None
+            try:
+                while tasks and creds is None:
+                    done, pending = await asyncio.wait(tasks,
+                                                       return_when=asyncio.FIRST_COMPLETED)
+                    tasks = list(pending)
+                    for task in done:
+                        if creds is None and not task.exception():
+                            creds = task.result()
+                if creds is None:
+                    raise RuntimeError("not confirmed")
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await self._drop_qr()
+            login = ""
+            try:
+                async with PassportClient.create() as client:
                     info = await client.fetch_account_info(creds.x_token)
                     login = info.display_login or ""
-                except Exception:
-                    pass
-                return creds, login
+            except Exception:
+                pass
+            return creds, login
 
-        creds, login = self._run(wait())
+        try:
+            creds, login = self._run(wait(), timeout=700)
+        finally:
+            self._device = None
         self._save({
             "x_token": creds.x_token.get_secret(),
             "music_token": creds.music_token.get_secret() if creds.music_token else "",
@@ -127,7 +280,6 @@ class Yandex:
             "uid": creds.uid,
             "login": login or creds.display_login or "",
         })
-        self._session = None
         self._client = None
         return True
 
@@ -137,6 +289,7 @@ class Yandex:
         except OSError:
             pass
         self._client = None
+        self._radio = {}
 
     async def _renew(self, saved):
         """A new music token from the x_token, or a new x_token first from
@@ -180,15 +333,137 @@ class Yandex:
             self._client = await ClientAsync(saved["music_token"], report_unknown_fields=False).init()
         return self._client
 
-    # --- music ---------------------------------------------------------------
-    def collections(self):
+    # --- what there is to play ---------------------------------------------
+    @staticmethod
+    def _mix(category):
+        """This day's tag of a category, a different one each day."""
+        tags = next(t for c, _n, t in TAGS if c == category)
+        return tags[datetime.date.today().toordinal() % len(tags)]
+
+    def home(self):
+        mood, activity = self._mix("mood"), self._mix("activity")
+        season = SEASONS[datetime.date.today().month]
+        return [
+            {"id": "wave", "title": "Моя волна"},
+            {"id": "mine", "title": "Моя коллекция"},
+            {"id": "feed", "title": "Для вас"},
+            {"id": "chart", "title": "Чарт"},
+            {"id": "new_releases", "title": "Новые релизы"},
+            {"id": "new_playlists", "title": "Новые плейлисты"},
+            {"id": "tag:top", "title": "Лучшее"},
+            {"id": "tag:" + mood[0], "title": "Настроение: " + mood[1]},
+            {"id": "tag:" + activity[0], "title": "Занятие: " + activity[1]},
+            {"id": "tag:" + season, "title": "Сезон: " + SEASON_NAMES[season]},
+        ]
+
+    def home_row(self, row_id):
+        if row_id == "wave":
+            return self._waves()
+        if row_id == "mine":
+            return [_item("list", "likes", "Мне нравится", glyph="♥")] + self._run(self._mine())
+        if row_id == "chart":
+            return self.tracks("chart")[:ROW_MAX]
+        return self.browse(row_id)[:ROW_MAX]
+
+    @staticmethod
+    def _waves():
+        return [_item("radio", WAVE, "Моя волна")] + [
+            _item("radio", "%s#%s" % (WAVE, mode), name, glyph=sign)
+            for mode, name, _s, sign in MODES]
+
+    async def _playlists_of_mine(self):
+        """One's own playlists, then the ones one likes."""
+        api = await self._api()
+        own = await api.users_playlists_list() or []
+        liked = [like.playlist for like in await api.users_likes_playlists() or []]
+        return _some(map(_playlist, own + liked))
+
+    async def _albums_of_mine(self):
+        api = await self._api()
+        return _some(_album(like.album) for like in await api.users_likes_albums() or [])
+
+    def _mine(self):
+        async def get():
+            return await self._playlists_of_mine() + await self._albums_of_mine()
+
+        return get()
+
+    async def _playlists(self, ids):
+        api = await self._api()
+        return _some(map(_playlist, await api.playlists_list(ids) or [])) if ids else []
+
+    async def _station_list(self):
+        if self._stations is None:
+            api = await self._api()
+            self._stations = await api.rotor_stations_list("ru") or []
+        return self._stations
+
+    def browse(self, folder_id):
         async def get():
             api = await self._api()
-            out = [{"id": WAVE, "title": "Моя волна", "radio": True},
-                   {"id": "likes", "title": "Мне нравится", "radio": False}]
-            for pl in await api.users_playlists_list() or []:
-                out.append({"id": "playlist:%s" % pl.kind, "title": pl.title, "radio": False})
-            return out
+            if not folder_id:
+                return [_item("radio", WAVE, "Моя волна"),
+                        _item("folder", "modes", "Режимы волны", glyph="≋"),
+                        _item("folder", "feed", "Для вас", glyph="★"),
+                        _item("folder", "collection", "Коллекция", glyph="♥"),
+                        _item("folder", "radio", "Радио", glyph="◉"),
+                        _item("folder", "picks", "Подборки", glyph="☰")]
+            if folder_id == "modes":
+                return self._waves()[1:]
+            if folder_id == "feed":
+                feed = await api.feed()
+                return _some(_playlist(g.data) for g in (feed.generated_playlists or [])
+                             if g.ready and g.data) if feed else []
+            if folder_id == "collection":
+                return [_item("list", "likes", "Мне нравится", glyph="♥"),
+                        _item("folder", "playlists", "Мои плейлисты"),
+                        _item("folder", "albums", "Мои альбомы", glyph="◎"),
+                        _item("folder", "artists", "Мои исполнители", glyph="☻")]
+            if folder_id == "playlists":
+                return await self._playlists_of_mine()
+            if folder_id == "albums":
+                return await self._albums_of_mine()
+            if folder_id == "artists":
+                return _some(_artist(like.artist)
+                             for like in await api.users_likes_artists() or [])
+            if folder_id == "radio":
+                return [_item("folder", "stations:" + kind, name) for kind, name in STATIONS]
+            if folder_id.startswith("stations:"):
+                kind = folder_id.split(":", 1)[1]
+                out = []
+                for res in await self._station_list():
+                    st = res.station
+                    if not st or not st.id or st.id.type != kind or st.parent_id:
+                        continue
+                    icon = st.full_image_url or (st.icon.image_url if st.icon else None)
+                    out.append(_item("radio", "%s:%s" % (kind, st.id.tag), st.name or st.id.tag,
+                                     "", _cover(icon)))
+                return out
+            if folder_id == "picks":
+                return [_item("folder", "picks:" + c, name) for c, name, _t in TAGS]
+            if folder_id.startswith("picks:"):
+                category = folder_id.split(":", 1)[1]
+                tags = next((t for c, _n, t in TAGS if c == category), [])
+                return [_item("folder", "tag:" + slug, name) for slug, name in tags]
+            if folder_id.startswith("tag:"):
+                res = await api.tags(folder_id.split(":", 1)[1])
+                ids = ["%s:%s" % (p.uid, p.kind) for p in (res.ids if res else [])]
+                return await self._playlists(ids[:LIST_MAX])
+            if folder_id == "new_releases":
+                res = await api.new_releases()
+                ids = [str(x) for x in (res.new_releases if res else [])[:ROW_MAX]]
+                return _some(map(_album, await api.albums(ids) or [])) if ids else []
+            if folder_id == "new_playlists":
+                res = await api.new_playlists()
+                ids = ["%s:%s" % (p.uid, p.kind)
+                       for p in (res.new_playlists if res else [])[:ROW_MAX]]
+                return await self._playlists(ids)
+            if folder_id.startswith("artist:"):
+                artist = folder_id.split(":", 1)[1]
+                res = await api.artists_direct_albums(artist, page_size=50)
+                return ([_item("list", "artist_tracks:" + artist, "Популярные треки")]
+                        + _some(map(_album, res.albums if res else [])))
+            return []
 
         return self._run(get())
 
@@ -199,30 +474,51 @@ class Yandex:
             if collection_id == "likes":
                 likes = await api.users_likes_tracks()
                 ids = [t.track_id for t in (likes.tracks if likes else [])[:LIST_MAX]]
+            elif collection_id == "chart":
+                res = await api.chart()
+                return _tracks(t.track for t in (res.chart.tracks or [])[:LIST_MAX]
+                               if t.track) if res and res.chart else []
             elif collection_id.startswith("playlist:"):
-                pl = await api.users_playlists(collection_id.split(":", 1)[1])
+                uid, kind = collection_id.split(":")[1:3]
+                pl = await api.users_playlists(kind, user_id=uid)
                 ids = [t.track_id for t in (pl.tracks or [])[:LIST_MAX]] if pl else []
+            elif collection_id.startswith("album:"):
+                album = await api.albums_with_tracks(collection_id.split(":", 1)[1])
+                return _tracks(t for volume in (album.volumes or []) for t in volume) if album else []
+            elif collection_id.startswith("artist_tracks:"):
+                res = await api.artists_tracks(collection_id.split(":", 1)[1], page_size=LIST_MAX)
+                return _tracks(res.tracks if res else [])
             if not ids:
                 return []
-            return [x for x in map(_track, await api.tracks(ids)) if x]
+            return _tracks(await api.tracks(ids))
 
         return self._run(get())
 
     def radio_next(self, collection_id, last_track):
         async def get():
             api = await self._api()
-            res = await api.rotor_station_tracks(
-                collection_id, settings2=True, queue=last_track["id"] if last_track else None)
-            if not res:
-                return []
-            if collection_id not in self._batch:
+            state = self._radio.get(collection_id)
+            res = None
+            if state and last_track:
                 try:
-                    await api.rotor_station_feedback_radio_started(
-                        collection_id, "b8k-music", batch_id=res.batch_id)
+                    res = await api.rotor_session_tracks(state["session"],
+                                                         queue=[last_track["id"]])
                 except Exception:
-                    pass
-            self._batch[collection_id] = res.batch_id
-            return [x for x in (_track(s.track) for s in res.sequence or []) if x]
+                    res = None  # the session is gone: a new one follows
+            if not res or not res.sequence:
+                station, _, mode = collection_id.partition("#")
+                seeds = [station] + ([SEEDS[mode]] if mode in SEEDS else [])
+                res = await api.rotor_session_new(
+                    seeds, queue=[last_track["id"]] if last_track else None,
+                    include_tracks_in_response=True, include_wave_model=True, interactive=True)
+                if not res or not res.radio_session_id:
+                    return []
+                state = self._radio[collection_id] = {"session": res.radio_session_id,
+                                                      "batch": res.batch_id}
+                await self._event(api, state, "radioStarted")
+            if res.batch_id:
+                state["batch"] = res.batch_id
+            return _tracks(s.track for s in res.sequence or [])
 
         return self._run(get())
 
@@ -231,7 +527,7 @@ class Yandex:
             api = await self._api()
             res = await api.search(query, type_="track")
             found = res.tracks.results if res and res.tracks else []
-            return [x for x in map(_track, found[:40]) if x]
+            return _tracks(found[:40])
 
         return self._run(get())
 
@@ -248,27 +544,51 @@ class Yandex:
 
         return self._run(get())
 
+    # --- what one likes ------------------------------------------------------
+    def liked(self):
+        async def get():
+            api = await self._api()
+            likes = await api.users_likes_tracks()
+            return {str(t.id) for t in (likes.tracks if likes else [])}
+
+        return self._run(get())
+
+    def like(self, track, on):
+        async def send():
+            api = await self._api()
+            if on:
+                await api.users_likes_tracks_add(track["id"])
+            else:
+                await api.users_likes_tracks_remove(track["id"])
+
+        self._run(send())
+
+    @staticmethod
+    async def _event(api, state, kind, track=None, seconds=None):
+        from yandex_music import SessionEvent
+
+        event = SessionEvent(type=kind, timestamp=_now(),
+                             track_id=track["id"] if track else None,
+                             total_played_seconds=int(seconds) if seconds is not None else None)
+        try:
+            await api.rotor_session_feedback(state["session"], event, batch_id=state["batch"])
+        except Exception:
+            pass  # feedback only tunes the recommendations
+
     def feedback(self, collection_id, event, track, seconds):
-        if collection_id != WAVE:
+        state = self._radio.get(collection_id)
+        kind = {"start": "trackStarted", "finish": "trackFinished", "skip": "skip"}.get(event)
+        if not state or not kind:
             return
 
         async def send():
             api = await self._api()
-            batch = self._batch.get(collection_id)
-            if event == "start":
-                await api.rotor_station_feedback_track_started(collection_id, track["id"],
-                                                               batch_id=batch)
-            elif event == "finish":
-                await api.rotor_station_feedback_track_finished(collection_id, track["id"],
-                                                                seconds, batch_id=batch)
-            elif event == "skip":
-                await api.rotor_station_feedback_skip(collection_id, track["id"], seconds,
-                                                      batch_id=batch)
+            await self._event(api, state, kind, track, None if event == "start" else seconds)
 
         try:
             self._run(send())
         except Exception:
-            pass  # feedback only tunes the recommendations
+            pass
 
 
 SOURCE = Yandex()
