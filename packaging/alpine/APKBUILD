@@ -1,6 +1,6 @@
 # Maintainer: Mikhail Nevskiy <rensomail@gmail.com>
 pkgname=b8k-music
-pkgver=1.7
+pkgver=1.7.1
 pkgrel=0
 pkgdesc="Музыка: A music service in large type (GTK 3)"
 url="https://github.com/trudenboy/b8k-music"
