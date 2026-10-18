@@ -1,29 +1,24 @@
 # SPDX-License-Identifier: GPL-2.0
 import os
 import sys
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import playback  # noqa: E402
+from b8k_compat.testing import FakePlayer  # noqa: E402
 from tests import fake  # noqa: E402
 from tests.fake import track  # noqa: E402
 
 
 class Case(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.TemporaryDirectory()
-        self.awake = os.path.join(self.dir.name, "1.suspend")
         self.session(fake.Source())
 
-    def tearDown(self):
-        self.dir.cleanup()
-
     def session(self, source):
-        self.src, self.player = source, fake.Player()
+        self.src, self.player = source, FakePlayer()
         self.work, self.later, self.events = fake.Work(), fake.Later(), fake.Events()
         self.s = playback.Session(source, lambda: self.player, self.work, self.later,
-                                  self.events, self.awake)
+                                  self.events)
         self.s.quality = "low"
         return self.s
 
@@ -34,18 +29,16 @@ class Case(unittest.TestCase):
 class List(Case):
     def test_plays_the_tapped_track_then_on_to_the_end(self):
         self.s.play_list([track(1), track(2)], 1)
-        self.assertEqual(self.player.url, "fake://low/2")
+        self.assertEqual(self.player.what, "fake://low/2")
         self.assertTrue(self.events.on)
-        self.assertTrue(os.path.exists(self.awake))
         self.s.ended()
         self.assertFalse(self.events.on)
-        self.assertFalse(os.path.exists(self.awake))
 
     def test_goes_to_the_next_at_the_end(self):
         self.s.play_list([track(1), track(2)], 0)
         self.s.ended()
         self.assertEqual(self.s.current["id"], "2")
-        self.assertEqual(self.player.url, "fake://low/2")
+        self.assertEqual(self.player.what, "fake://low/2")
 
     def test_the_queue_is_its_own(self):
         tracks = [track(1), track(2)]
@@ -55,9 +48,9 @@ class List(Case):
 
     def test_prev_starts_over_after_a_while(self):
         self.s.play_list([track(1), track(2)], 1)
-        self.player.at = 30
+        self.player.position = 30
         self.s.prev()
-        self.assertEqual((self.s.current["id"], self.player.at), ("2", 0))
+        self.assertEqual((self.s.current["id"], self.player.position), ("2", 0))
         self.s.prev()
         self.assertEqual(self.s.current["id"], "1")
 
@@ -66,7 +59,6 @@ class List(Case):
         self.s.stop()
         self.assertIsNone(self.s.current)
         self.assertIsNone(self.events.tracks[-1])
-        self.assertFalse(os.path.exists(self.awake))
 
 
 class NotPlaying(Case):
@@ -90,12 +82,12 @@ class NotPlaying(Case):
         self.s.play_list([track(1)], 0)
         self.later.fire()
         self.assertFalse(self.events.on)
-        self.assertFalse(os.path.exists(self.awake))
+        self.assertFalse(self.player.playing)  # so the machine may sleep
 
     def test_a_player_error_gives_way_too(self):
         self.s.play_list([track(1), track(2)], 0)
         self.s.ended("поток оборвался")
-        self.assertFalse(os.path.exists(self.awake))
+        self.assertFalse(self.player.playing)
         self.later.fire()
         self.assertEqual(self.s.current["id"], "2")
 
@@ -111,7 +103,7 @@ class Radio(Case):
     def test_tells_start_finish_and_skip(self):
         self.s.play_radio("r", [track(1), track(2), track(3), track(4)], 0)
         self.s.ended()
-        self.player.at = 7
+        self.player.position = 7
         self.s.next()
         self.assertEqual(self.told(), [("r", "start", "1"), ("r", "finish", "1"),
                                        ("r", "start", "2"), ("r", "skip", "2"),
@@ -165,7 +157,7 @@ class Radio(Case):
         self.s.ended()
         self.work.run()
         self.assertEqual(self.s.current["id"], "2")
-        self.assertEqual(self.player.url, "fake://low/2")
+        self.assertEqual(self.player.what, "fake://low/2")
 
     def test_tries_twice_at_the_end_then_is_quiet(self):
         self.src.batches = [[], OSError("нет связи"), OSError("нет связи"), [track(2)]]

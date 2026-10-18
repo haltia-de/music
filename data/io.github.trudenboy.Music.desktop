@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Music
+Name[ru]=Музыка
+Comment=A music service in large type
+Comment[ru]=Музыкальный сервис крупным шрифтом
+Exec=b8k-music
+Icon=io.github.trudenboy.Music
+Terminal=false
+Categories=GTK;AudioVideo;Audio;Player;
+Keywords=music;radio;yandex;музыка;радио;яндекс;волна;
+StartupNotify=true
+X-B8K-Home=true
+X-B8K-Replaces=music

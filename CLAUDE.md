@@ -2,32 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-b8k-music is a GTK 3 music player for the Lenovo YOGA Tablet 10 (B8000-H) running the
-[lenovo-b8000h-linux](https://github.com/trudenboy/lenovo-b8000h-linux) shell. Large touch
-targets, Russian UI, playback continues with the window closed.
+b8k-music (Музыка, id `io.github.trudenboy.Music`) is a GTK 3 music player made for the Lenovo
+YOGA Tablet 10 (B8000-H) and its b8k shell, but a self-contained desktop program: it depends on no
+shell and meets one only through freedesktop standards (its `.desktop` file, a logind inhibitor),
+per ADR 0001 in [lenovo-b8000h-linux](https://github.com/trudenboy/lenovo-b8000h-linux). Large touch
+targets, Russian UI, music plays while the window is behind other programs.
 
 ## Commands
 
 There is no build or linter. Checks available:
 
 - `python3 -m unittest` — tests in `tests/` (playback, answers, likes, the source contract;
-  stand-ins from `tests/fake.py`; no GTK, mpv or network). One test: `python3 -m unittest tests.test_playback.Radio`.
-  Not installed on the tablet.
+  stand-ins from `tests/fake.py` and `b8k_compat.testing.FakePlayer`; no GTK, mpv or network).
+  One test: `python3 -m unittest tests.test_playback.Radio`. Needs `b8k_compat` importable
+  (`PYTHONPATH=/mnt/data/Projects/b8k-compat`). Not installed; the APKBUILD runs them.
 - `python3 -m py_compile b8k-music *.py sources/*.py` — syntax check.
 - `python3 b8k-music` — run from the checkout (finds `sources/` next to itself). Needs
-  PyGObject, python-mpv/libmpv, qrcode, and `yandex_music` + `ya_passport_auth` importable
-  (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/b8k-music` after an `install.sh` into a scratch ROOT).
-  Without the tablet shell, `b8k_ui` is absent and the program falls back (no buzz, `ask()` always yes).
-- `sh install.sh [ROOT]` — installs into a root file system; the tablet shell's image build calls it.
-  Copies the top-level `*.py` modules and `sources/` to `/usr/local/lib/b8k-music`; a new module next to them
-  needs a line there. Downloads pinned wheels (sha256-checked, cached in `$B8K_CACHE` or `.cache/`) and unpacks them
-  next to the sources in `/usr/local/lib/b8k-music`. Bumping a library means updating both URL and sum
-  in the `WHEELS` heredoc.
+  PyGObject, b8k-compat, python-mpv/libmpv, qrcode, and `yandex_music` + `ya_passport_auth`
+  importable (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/b8k-music` after an `install.sh` into a
+  scratch ROOT).
+- `sh install.sh [ROOT] [PREFIX]` — PREFIX `/usr/local` by default, `/usr` from the APKBUILD
+  (`packaging/alpine/`); the device repo pins a tag and builds the tablet image from it. Installs
+  the program to `PREFIX/bin`, the top-level `*.py` modules and `sources/` to `PREFIX/lib/b8k-music`
+  (a new module needs a line there; the program finds that folder from its own path), `data/` (the
+  `.desktop` file with `X-B8K-Home`/`X-B8K-Replaces=music`, hicolor icon, metainfo) to
+  `PREFIX/share`, and removes the shell's old `apps.d/music.conf` entry. Downloads pinned wheels
+  (sha256-checked, cached in `$B8K_CACHE` or `.cache/`) and unpacks them into the lib folder.
+  Bumping a library means updating both URL and sum in the `WHEELS` heredoc.
 
 ## Architecture
 
-- `b8k-music` — the window, one Python file: `Music(Gtk.Application)` (app id `b8k.Music`),
-  `Player` (libmpv, sound only), `Covers` (cover cache in `~/.cache/b8k-music/`).
+- `b8k-music` — the window, one Python file: `Music(Gtk.Application)` (id `APP_ID`, also set as
+  the program name before GTK loads, which names the window under Wayland), `Covers` (cover cache
+  in `~/.cache/b8k-music/`).
+- [b8k-compat](https://github.com/trudenboy/b8k-compat) (`b8k_compat`, at
+  `/mnt/data/Projects/b8k-compat`): `sound.Player` (libmpv, keeps the machine awake through logind
+  while playing and not paused), `Settings`, `dialogs` (questions inside the window). The look
+  (large header and dialogs) comes from the desktop's GTK theme; the shell buzzes touches itself.
 - `playback.py` — `Session`, what plays (see Playback below); `answers.py` — `Answers`, the
   service's answers kept (see Caching); `likes.py` — `Likes`, the hearts. No GTK; each docstring is its module's interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
@@ -51,14 +62,13 @@ There is no build or linter. Checks available:
     and adds a `setting…` seed. Feedback goes to the session.
   - Item ids are prefixed strings the source parses back: `playlist:<uid>:<kind>`, `album:<id>`,
     `artist:<id>`, `stations:<type>`, `tag:<slug>`, …
-- `music.conf` / `music.svg` — registration with the shell (`/usr/local/share/b8k/apps.d/`).
 
 ### Threading rule
 
 Source methods block on the network. Call them through `Music.work(func, arg, done)`: `func` runs in
 a thread, `done(result, error)` runs on the GTK main loop; `done` may be None for fire-and-forget
-calls (`feedback`). Every GTK touch from another thread goes through `GLib.idle_add`, including
-mpv property/event callbacks in `Player`.
+calls (`feedback`). Every GTK touch from another thread goes through `GLib.idle_add`; b8k-compat's
+player already posts its callbacks that way.
 
 ### Navigation
 
@@ -74,7 +84,7 @@ A track card on the home page opens its row's list (`row["list"]`) scrolled to t
 ### Settings
 
 The gear opens a `settings` view. Settings live in `~/.config/b8k/music.conf`, section `[music]`
-(`load_setting`/`save_setting`, the same shape as b8k-max's `max.conf`). `quality` is one of the
+(`self.settings`, b8k-compat's `Settings("music")`). `quality` is one of the
 source's `qualities` ids, the lowest by default, and is passed to `stream_url(track, quality)`; it
 applies from the next track.
 
@@ -94,9 +104,9 @@ applies from the next track.
 ### Playback
 
 `self.session` (`playback.Session`) owns the queue, the radio, its growth, start/finish/skip
-feedback and the awake file; `Music` only calls it (`play_list`, `play_radio`, `jump`, the bar's
-buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). `Player` reports to it
-(`ended(error)`, `paused`). Change playback rules there, with a test in `tests/test_playback.py`.
+feedback; `Music` only calls it (`play_list`, `play_radio`, `jump`, the bar's
+buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). The player reports to
+it (`on_end` → `ended()`, `on_error` → `ended(text)`, `on_pause` → `paused`). Change playback rules there, with a test in `tests/test_playback.py`.
 
 - The session keeps its own copy of the tracks. The radio page (`self.radio_view`) mirrors it:
   `on_grew` appends rows and `shown` entries, so row positions equal queue positions.
@@ -111,8 +121,9 @@ buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). `Pla
   changes at once, one request per track is in flight and the service ends with the last tap; a
   failure reverts to the confirmed state. Liked ids come via `answers` (`refresh()` on the first
   page, forced on the house button); confirmed taps stay on until an answer shows them.
-- `$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend` exists while music plays; it keeps the tablet from
-  suspending (the shell's b8k-sleep reads it).
+- The machine stays awake while the player plays and is not paused (b8k-compat's logind
+  inhibitor; it registers only for a process inside the graphical session). A track that gives way
+  stops the player, so nothing holds the machine meanwhile.
 - Closing the window (the shell's «Закрыть» sends a toplevel close) stops the music and quits; music
   keeps playing only while the window is open behind other programs. This replaced an earlier
   hide-on-close, which left music playing after «Закрыть».

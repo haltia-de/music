@@ -1,0 +1,23 @@
+# Maintainer: Mikhail Nevskiy <rensomail@gmail.com>
+pkgname=b8k-music
+pkgver=1.7
+pkgrel=0
+pkgdesc="Музыка: A music service in large type (GTK 3)"
+url="https://github.com/trudenboy/b8k-music"
+arch="noarch"
+license="GPL-2.0-only"
+depends="python3 py3-gobject3 gtk+3.0 py3-b8k-compat py3-mpv mpv-libs py3-aiohttp py3-aiofiles py3-yarl py3-requests py3-typing-extensions py3-qrcode"
+# install.sh fetches the pinned yandex-music and ya-passport-auth wheels.
+options="net"
+source="$pkgname-$pkgver.tar.gz::https://github.com/trudenboy/b8k-music/archive/v$pkgver.tar.gz"
+
+check() {
+	python3 -m unittest
+}
+
+package() {
+	sh ./install.sh "$pkgdir" /usr
+}
+
+# `abuild checksum` fills this in for a release.
+sha512sums="SKIP"

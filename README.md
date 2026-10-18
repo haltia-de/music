@@ -1,8 +1,9 @@
 # b8k-music
 
-Музыка для планшета Lenovo YOGA Tablet 10 (B8000-H) с оболочкой
-[lenovo-b8000h-linux](https://github.com/trudenboy/lenovo-b8000h-linux):
-крупные плитки и список, игра в фоне.
+Музыка (`io.github.trudenboy.Music`) крупными плитками и списком, с игрой в
+фоне. Сделана для планшета Lenovo YOGA Tablet 10 (B8000-H) с оболочкой
+[lenovo-b8000h-linux](https://github.com/trudenboy/lenovo-b8000h-linux), но
+работает как обычная GTK-программа и в GNOME, KDE и других средах.
 
 - Вход — QR-кодом (навести камеру телефона) или кодом устройства: открыть
   `ya.ru/device` и ввести код с экрана; токен обновления продлевает вход сам.
@@ -25,18 +26,22 @@
   умолчанию, обычное ~192, высокое до 320 с подпиской); хранится в
   `~/.config/b8k/music.conf`.
 - Внизу — обложка, трек, сердечко, назад / пауза / дальше и полоса перемотки.
-- Музыка играет, пока открыты другие программы; закрытие окна («Закрыть»
-  в оболочке) останавливает её. Пока играет музыка, планшет не засыпает
-  (`$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend`), экран гаснуть может.
+- Музыка играет, пока открыты другие программы; закрытие окна
+  останавливает её. Пока играет музыка (не на паузе), компьютер не засыпает
+  (запрет сна через logind), экран гаснуть может.
 
 Сервисы — модули в `sources/` (описание — в `sources/__init__.py`): сейчас
 Яндекс Музыка через [yandex-music](https://github.com/MarshalX/yandex-music-api)
 и [ya-passport-auth](https://github.com/trudenboy/ya-passport-auth); Звук,
 Apple Music и другие добавляются так же, файлом в `sources/`.
 
-Нужны Python 3 с PyGObject (GTK 3), python-mpv с libmpv, aiohttp, aiofiles,
-yarl, requests и typing-extensions; для QR-кода — qrcode. Установка: `sh install.sh [ROOT]` —
-скрипт скачивает обе библиотеки с PyPI и сверяет их sha256.
+Нужны Python 3 с PyGObject (GTK 3),
+[b8k-compat](https://github.com/trudenboy/b8k-compat) (звук, настройки,
+вопросы), python-mpv с libmpv, aiohttp, aiofiles, yarl, requests и
+typing-extensions; для QR-кода — qrcode. Установка: `sh install.sh [ROOT]
+[PREFIX]` (PREFIX — `/usr/local`, если не указан) — ставит программу,
+`.desktop`-файл, значок и metainfo, скачивает обе библиотеки Яндекса с PyPI
+и сверяет их sha256. Для Alpine — `packaging/alpine/APKBUILD`.
 
 Вход хранится в `~/.local/share/b8k-music/yandex.json` (права 600), обложки —
 в `~/.cache/b8k-music/`. Неофициальный клиент; без подписки Плюс часть

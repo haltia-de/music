@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
-"""Stand-ins for a music service, the player and the window, for tests."""
+"""Stand-ins for a music service and the window, for tests; the player's
+is b8k_compat.testing.FakePlayer."""
 
 
 def track(n):
@@ -81,30 +82,6 @@ class Source:
 
     def feedback(self, radio_id, event, track, seconds):
         self.told.append((radio_id, event, track["id"], seconds))
-
-
-class Player:
-    def __init__(self):
-        self.url = None
-        self.paused = False
-        self.at = 0
-        self.stops = 0
-
-    def play(self, url):
-        self.url, self.paused, self.at = url, False, 0
-
-    def toggle(self):
-        self.paused = not self.paused
-
-    def seek(self, sec):
-        self.at = sec
-
-    def time(self):
-        return self.at
-
-    def stop(self):
-        self.url = None
-        self.stops += 1
 
 
 class Work:

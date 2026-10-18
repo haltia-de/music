@@ -23,15 +23,13 @@ Signing in shows a QR code to scan with the phone and a code to enter at
 the service's page, whichever is easier.
 
 The music goes on while other programs are in front; closing the window
-(the shell's «Закрыть») stops it and quits. While it plays,
-$XDG_RUNTIME_DIR/b8k-awake/<pid>.suspend keeps the tablet from sleeping
-when the screen goes off (b8k-sleep); the screen itself may go off.
+stops it and quits. While it plays (not paused) a logind inhibitor keeps
+the machine from sleeping when the screen goes off; the screen may go off.
 
 Services are the sources package next to this file (or in
-/usr/local/lib/b8k-music): Яндекс Музыка now, others the same way. Playback
-is libmpv through python-mpv, sound only.
+PREFIX/lib/b8k-music): Яндекс Музыка now, others the same way. Playback
+is libmpv through b8k-compat, sound only.
 """
-import configparser
 import hashlib
 import os
 import sys
@@ -42,30 +40,29 @@ from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 
 import gi
+from gi.repository import GLib
+
+APP_ID = "io.github.trudenboy.Music"
+# Under Wayland GTK 3 names the window by the program name: the program's
+# id, as its .desktop file is named, so a desktop or the b8k shell finds it.
+GLib.set_prgname(APP_ID)
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, GdkPixbuf, GLib, GObject, Gtk, Pango
-
-sys.path.insert(0, "/usr/local/share/b8k/python")
-try:
-    import b8k_ui
-except ImportError:
-    b8k_ui = None
+from b8k_compat import dialogs, sound  # noqa: E402
+from b8k_compat.settings import Settings  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf, Gtk, Pango  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-for path in (HERE, "/usr/local/lib/b8k-music"):
-    if os.path.isdir(os.path.join(path, "sources")):
-        sys.path.insert(0, path)
-        break
+sys.path.insert(0, HERE if os.path.isdir(os.path.join(HERE, "sources"))
+                else os.path.join(os.path.dirname(HERE), "lib", "b8k-music"))
 import answers  # noqa: E402
 import likes  # noqa: E402
 import playback  # noqa: E402
 import sources  # noqa: E402
 
 CACHE = os.path.expanduser("~/.cache/b8k-music")
-CONFIG = os.path.expanduser("~/.config/b8k/music.conf")
 DATA = os.path.join(CACHE, "data.json")
 PIXBUFS = 400  # decoded covers kept in memory
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
@@ -144,41 +141,11 @@ scale slider { min-width: 32px; min-height: 32px; }
 GLYPHS = {"radio": "∿", "list": "♫", "folder": "♫", "track": "♪"}
 
 
-def buzzer():
-    return b8k_ui.Buzz() if b8k_ui else (lambda *_a: True)
-
-
-def ask(question, yes):
-    return b8k_ui.ask(question, yes) if b8k_ui else True
-
-
 def mmss(sec):
     if not sec or sec < 0:
         return "0:00"
     sec = int(sec)
     return "%d:%02d" % (sec // 60, sec % 60)
-
-
-def load_setting(key, default):
-    """A setting of [music] in CONFIG."""
-    conf = configparser.ConfigParser(interpolation=None)
-    conf.read(CONFIG, encoding="utf-8")
-    return conf.get("music", key, fallback=default)
-
-
-def save_setting(key, value):
-    conf = configparser.ConfigParser(interpolation=None)
-    conf.read(CONFIG, encoding="utf-8")
-    if not conf.has_section("music"):
-        conf.add_section("music")
-    conf["music"][key] = value
-    try:
-        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-        with open(CONFIG + ".new", "w", encoding="utf-8") as fh:
-            conf.write(fh)
-        os.replace(CONFIG + ".new", CONFIG)
-    except OSError:
-        pass
 
 
 def kind(item):
@@ -280,62 +247,15 @@ class Covers:
         return False
 
 
-class Player:
-    """libmpv, sound only. Callbacks come back on the GTK side."""
-
-    def __init__(self, on_end, on_time, on_pause):
-        import mpv
-
-        self.mpv = mpv.MPV(video=False, ytdl=False, input_default_bindings=False,
-                           terminal=False, cache="yes", demuxer_max_bytes="16MiB")
-        self.on_end, self.on_time, self.on_pause = on_end, on_time, on_pause
-        self.mpv.observe_property("time-pos", lambda _n, v: GLib.idle_add(self.on_time, v))
-        self.mpv.observe_property("pause", lambda _n, v: GLib.idle_add(self.on_pause, v))
-
-        @self.mpv.event_callback("end-file")
-        def _end(event):
-            data = getattr(event, "data", None)
-            reason = getattr(data, "reason", None)
-            # 0 is the end of the file; a new loadfile also ends the old one.
-            if reason in (0, "eof", b"eof") or str(reason).endswith("EOF"):
-                GLib.idle_add(self.on_end, None)
-            elif reason in (4, "error", b"error") or str(reason).endswith("ERROR"):
-                GLib.idle_add(self.on_end, "поток оборвался")
-
-    def play(self, url):
-        self.mpv.play(url)
-        self.mpv.pause = False
-
-    def toggle(self):
-        self.mpv.pause = not self.mpv.pause
-
-    def seek(self, sec):
-        try:
-            self.mpv.seek(sec, reference="absolute")
-        except Exception:
-            pass
-
-    def time(self):
-        try:
-            return self.mpv.time_pos or 0
-        except Exception:
-            return 0
-
-    def stop(self):
-        try:
-            self.mpv.stop()
-        except Exception:
-            pass
-
-
 class Music(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="b8k.Music")
+        super().__init__(application_id=APP_ID)
         self.sources = sources.load()
         self.src = self.sources[min(self.sources)] if self.sources else None
         self.covers = Covers()
         self.qualities = getattr(self.src, "qualities", None) or []
-        self.quality = load_setting("quality", self.qualities[0][0] if self.qualities else "")
+        self.settings = Settings("music")
+        self.quality = self.settings.get("quality", self.qualities[0][0] if self.qualities else "")
         self.answers = answers.Answers(self.src, self.work, self.later, DATA)
         self.likes = likes.Likes(self.src, self.answers, self.work,
                                  lambda: self.update_hearts(), self.say)
@@ -347,16 +267,14 @@ class Music(Gtk.Application):
         self.radio_view = None  # the page that shows the radio playing
         self.seeking = False
         self.win = None
-        self.awake = None
-        run = os.environ.get("XDG_RUNTIME_DIR")
-        if run:
-            os.makedirs(os.path.join(run, "b8k-awake"), mode=0o700, exist_ok=True)
-            self.awake = os.path.join(run, "b8k-awake", "%d.suspend" % os.getpid())
         events = SimpleNamespace(changed=self.on_track, grew=self.on_grew,
                                  playing=self.on_playing, failed=self.say)
+        # The player keeps the machine awake while it plays, not paused.
         self.session = playback.Session(
-            self.src, lambda: Player(self.session.ended, self.on_time, self.session.paused),
-            self.work, self.later, events, self.awake)
+            self.src, lambda: sound.Player("Музыка", on_end=lambda: self.session.ended(),
+                                           on_time=self.on_time, on_pause=self.session.paused,
+                                           on_error=self.session.ended),
+            self.work, self.later, events)
         self.session.quality = self.quality
 
     # --- the window ---------------------------------------------------------
@@ -364,11 +282,8 @@ class Music(Gtk.Application):
         if self.win:
             self.win.present()
             return
-        self.buzz = buzzer()
-        GObject.type_class_ref(Gtk.Button)
-        GObject.add_emission_hook(Gtk.Button, "pressed", self.buzz)
         provider = Gtk.CssProvider()
-        provider.load_from_data((b8k_ui.HEADER_CSS if b8k_ui else b"") + CSS)
+        provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
@@ -494,19 +409,13 @@ class Music(Gtk.Application):
         self.show_main()
 
     def logout(self):
-        def worker():
-            if ask("Выйти из %s?" % self.src.label, "Выйти"):
-                GLib.idle_add(self._logout)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _logout(self):
+        if not dialogs.ask(self.win, "Выйти из %s?" % self.src.label, "Выйти"):
+            return
         self.stop()
         self.src.logout()
         self.likes.reset()
         self.answers.reset()
         self.show_login()
-        return False
 
     # --- the pages --------------------------------------------------------------
     def show_main(self):
@@ -773,7 +682,7 @@ class Music(Gtk.Application):
         if quality == self.quality:
             return
         self.quality = self.session.quality = quality
-        save_setting("quality", quality)
+        self.settings.set("quality", quality)
         self.mark_quality(view)
         if self.session.current:
             self.say("Новое качество — со следующего трека.", view)
@@ -1080,8 +989,6 @@ class Music(Gtk.Application):
 
     def do_shutdown(self):
         self.answers.flush()
-        if self.awake and os.path.exists(self.awake):
-            os.unlink(self.awake)
         Gtk.Application.do_shutdown(self)
 
     # --- background work -------------------------------------------------------

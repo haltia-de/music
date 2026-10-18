@@ -2,10 +2,12 @@
 """What plays: a list from one of its tracks on, or a radio that goes on and
 on. Session is all of it, the window only shows what it says.
 
-Session(source, player, work, later, events, awake=None):
+Session(source, player, work, later, events):
   source        the music service (see sources/__init__.py)
   player()      gives the player, made the first time it is needed:
-                play(url), toggle(), seek(seconds), time(), stop()
+                b8k_compat.sound.Player (play(url), toggle(), seek(seconds),
+                position, stop()), which keeps the machine awake while it
+                plays
   work(func, arg, done)
                 func(arg) in a thread, done(result, error) back on this side;
                 done may be None
@@ -13,25 +15,22 @@ Session(source, player, work, later, events, awake=None):
                 func() once, after a while
   events        changed(track or None), grew(new tracks), playing(on),
                 failed(text)
-  awake         a file that exists while music plays (keeps the tablet up)
 
 The player tells it ended(error) at the end of a track and paused(on).
 
 A track one leaves before its end is a skip, paused or not; one that plays
 to its end is finished. A radio says so to its service, which learns from it.
 """
-import os
-
 RADIO_AHEAD = 2  # ask the radio for more when this few tracks are left
 GIVE_WAY = 2  # seconds a track that does not play stays before the next
 
 
 class Session:
-    def __init__(self, source, player, work, later, events, awake=None):
+    def __init__(self, source, player, work, later, events):
         self.src = source
         self.make_player = player
         self.player = None
-        self.work, self.later, self.events, self.awake = work, later, events, awake
+        self.work, self.later, self.events = work, later, events
         self.quality = ""
         self.tracks = []  # the queue
         self.index = -1
@@ -61,7 +60,7 @@ class Session:
         self.jump(self.index + 1)
 
     def prev(self):
-        if self.under_way and self.player and self.player.time() > 5:
+        if self.under_way and self.player and (self.player.position or 0) > 5:
             self.player.seek(0)
         else:
             self.jump(self.index - 1)
@@ -119,7 +118,7 @@ class Session:
         """The current track is left: a skip if it was playing."""
         track = self.current
         if track and self.radio and self.under_way:
-            self._feedback("skip", track, self.player.time())
+            self._feedback("skip", track, self.player.position or 0)
         self.under_way = False
 
     def _start(self, i):
@@ -206,12 +205,3 @@ class Session:
     def _set_playing(self, on):
         self.playing = on
         self.events.playing(on)
-        if not self.awake:
-            return
-        try:
-            if on:
-                open(self.awake, "w").close()
-            elif os.path.exists(self.awake):
-                os.unlink(self.awake)
-        except OSError:
-            pass
