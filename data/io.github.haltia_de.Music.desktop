@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Music
+Name[ru]=Музыка
+Comment=Яндекс Музыка: radio, collection, charts and search
+Comment[ru]=Яндекс Музыка: волна, коллекция, чарт и поиск
+Exec=haltia-music
+Icon=io.github.haltia_de.Music
+Terminal=false
+Categories=GTK;AudioVideo;Audio;Player;
+Keywords=music;radio;yandex;музыка;радио;яндекс;волна;
+StartupNotify=true
+X-Flatpak-RenamedFrom=io.github.trudenboy.Music.desktop;
+X-B8K-Home=true
+X-B8K-Replaces=music

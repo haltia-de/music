@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 """The services music comes from. Every module of this package that defines
-SOURCE is one; b8k-music lists them all and needs nothing else to know
+SOURCE is one; haltia-music lists them all and needs nothing else to know
 about a new one (Звук, Apple Music, ...).
 
 SOURCE has:
@@ -44,7 +44,7 @@ plays on and on, a folder holds more items.
 A track is a dict: kind "track", source, id, title, artist, duration
 (seconds or None), cover.
 
-A source may block (network): b8k-music calls it from a worker thread.
+A source may block (network): haltia-music calls it from a worker thread.
 """
 import importlib
 import pkgutil
@@ -61,14 +61,14 @@ def load():
         try:
             mod = importlib.import_module("%s.%s" % (__name__, info.name))
         except Exception as exc:  # a source must never take the program down
-            sys.stderr.write("b8k-music: source %s: %s\n" % (info.name, exc))
+            sys.stderr.write("haltia-music: source %s: %s\n" % (info.name, exc))
             continue
         src = getattr(mod, "SOURCE", None)
         if src is None:
             continue
         missing = [name for name in REQUIRED if not hasattr(src, name)]
         if missing:
-            sys.stderr.write("b8k-music: source %s lacks %s\n" % (info.name, ", ".join(missing)))
+            sys.stderr.write("haltia-music: source %s lacks %s\n" % (info.name, ", ".join(missing)))
             continue
         found[src.id] = src
     return found

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 """Stand-ins for a music service and the window, for tests; the player's
-is b8k_compat.testing.FakePlayer."""
+is haltia_kit.testing.FakePlayer."""
 
 
 def track(n):

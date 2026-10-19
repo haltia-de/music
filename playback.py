@@ -5,7 +5,7 @@ on. Session is all of it, the window only shows what it says.
 Session(source, player, work, later, events):
   source        the music service (see sources/__init__.py)
   player()      gives the player, made the first time it is needed:
-                b8k_compat.sound.Player (play(url), toggle(), seek(seconds),
+                haltia_kit.sound.Player (play(url), toggle(), seek(seconds),
                 position, stop()), which keeps the machine awake while it
                 plays
   work(func, arg, done)

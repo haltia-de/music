@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0
-"""Музыка: a music service in large type, playing in the background.
+"""Музыка: a music service, playing in the background.
 
 Two sections, chosen in the header: the home (the house) shows rows of what
 the service offers, Моя волна and its modes, one's collection, the chart,
@@ -10,12 +10,12 @@ starts when one taps a track in a list or «▶ Слушать» on a list or a 
 A radio (Моя волна) plays on and on, fetching more as it goes, and its list
 grows with it. The search field finds tracks. A heart on a track puts it
 into Мне нравится or takes it out. The gear opens the settings: the sound
-quality, the lowest unless chosen (~/.config/b8k/music.conf). The bar at the bottom shows the track
+quality, the lowest unless chosen (~/.config/haltia/music.conf). The bar at the bottom shows the track
 and holds its heart, back, pause and on, and the time bar seeks.
 
 Pages opened stay built until one goes back past them, so ← is at once and
 where one left it. The service's answers are kept in memory and on disk
-(~/.cache/b8k-music/data.json): a page shows what was known at once and
+(~/.cache/haltia-music/data.json): a page shows what was known at once and
 asks the service again when that is older than a quarter of an hour. Covers
 are kept on disk and, decoded, in memory.
 
@@ -27,8 +27,9 @@ stops it and quits. While it plays (not paused) a logind inhibitor keeps
 the machine from sleeping when the screen goes off; the screen may go off.
 
 Services are the sources package next to this file (or in
-PREFIX/lib/b8k-music): Яндекс Музыка now, others the same way. Playback
-is libmpv through b8k-compat, sound only.
+PREFIX/lib/haltia-music): Яндекс Музыка now, others the same way. Playback
+is libmpv through haltia-kit, sound only. Before 2.0 the program was
+b8k-music: its folders move to the new name at the first start.
 """
 import hashlib
 import os
@@ -42,27 +43,27 @@ from concurrent.futures import ThreadPoolExecutor
 import gi
 from gi.repository import GLib
 
-APP_ID = "io.github.trudenboy.Music"
+APP_ID = "io.github.haltia_de.Music"
 # Under Wayland GTK 3 names the window by the program name: the program's
-# id, as its .desktop file is named, so a desktop or the b8k shell finds it.
+# id, as its .desktop file is named, so a desktop or the Haltia shell finds it.
 GLib.set_prgname(APP_ID)
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
-from b8k_compat import dialogs, sound  # noqa: E402
-from b8k_compat.settings import Settings  # noqa: E402
+from haltia_kit import dialogs, paths, sound  # noqa: E402
+from haltia_kit.settings import Settings  # noqa: E402
 from gi.repository import Gdk, GdkPixbuf, Gtk, Pango  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE if os.path.isdir(os.path.join(HERE, "sources"))
-                else os.path.join(os.path.dirname(HERE), "lib", "b8k-music"))
+                else os.path.join(os.path.dirname(HERE), "lib", "haltia-music"))
 import answers  # noqa: E402
 import likes  # noqa: E402
 import playback  # noqa: E402
 import sources  # noqa: E402
 
-CACHE = os.path.expanduser("~/.cache/b8k-music")
+CACHE = os.path.join(GLib.get_user_cache_dir(), "haltia-music")
 DATA = os.path.join(CACHE, "data.json")
 PIXBUFS = 400  # decoded covers kept in memory
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
@@ -175,7 +176,7 @@ def qr_code(text, size):
         code.make(fit=True)
         matrix = code.get_matrix()
     except Exception as exc:
-        sys.stderr.write("b8k-music: no QR code: %s\n" % exc)
+        sys.stderr.write("haltia-music: no QR code: %s\n" % exc)
         return None
     cell = size // len(matrix)
     off = (size - cell * len(matrix)) // 2
@@ -1002,7 +1003,7 @@ class Music(Gtk.Application):
             try:
                 res, err = func(arg), None
             except Exception as exc:
-                sys.stderr.write("b8k-music: %s\n" % exc)
+                sys.stderr.write("haltia-music: %s\n" % exc)
                 res, err = None, exc
             if done:
                 GLib.idle_add(lambda: (done(res, err), False)[1])
@@ -1011,4 +1012,6 @@ class Music(Gtk.Application):
 
 
 if __name__ == "__main__":
+    # b8k-music before 2.0: the login, the kept answers and covers move once.
+    paths.migrate_dirs("b8k-music", "haltia-music")
     sys.exit(Music().run(sys.argv))

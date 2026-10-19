@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.haltia_de.Music</id>
+  <replaces><id>io.github.trudenboy.Music</id></replaces>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-only</project_license>
+  <name>Music</name>
+  <name xml:lang="ru">Музыка</name>
+  <summary>Яндекс Музыка: radio, collection, charts and search</summary>
+  <summary xml:lang="ru">Яндекс Музыка: волна, коллекция, чарт и поиск</summary>
+  <description>
+    <p xml:lang="ru">Яндекс Музыка просто и удобно для пальцев: Моя волна и её настроения, своя коллекция, чарт, новинки и подборки, поиск треков и плейлистов, отметки «Мне нравится». Музыка играет, пока окно открыто за другими программами.</p>
+    <p>Touch-first and simple, part of the Haltia desktop, made for an older person's tablet; at home on any GTK desktop.</p>
+  </description>
+  <launchable type="desktop-id">io.github.haltia_de.Music.desktop</launchable>
+  <url type="homepage">https://github.com/haltia-de/music</url>
+  <developer id="io.github.trudenboy"><name>Mikhail Nevskiy</name></developer>
+  <content_rating type="oars-1.1"/>
+  <requires><control>touch</control></requires>
+  <releases>
+    <release version="2.0.0" date="2026-10-19"/>
+    <release version="1.7.1" date="2026-10-18"/>
+    <release version="1.7" date="2026-10-18"/>
+  </releases>
+</component>

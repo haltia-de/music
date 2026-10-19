@@ -1,22 +1,27 @@
 # Maintainer: Mikhail Nevskiy <rensomail@gmail.com>
-pkgname=b8k-music
-pkgver=1.7.1
+pkgname=haltia-music
+pkgver=2.0.0
 pkgrel=0
-pkgdesc="Музыка: A music service in large type (GTK 3)"
-url="https://github.com/trudenboy/b8k-music"
+pkgdesc="Музыка: Яндекс Музыка with its radio, collection, charts and search (Haltia, GTK 3)"
+url="https://github.com/haltia-de/music"
+# b8k-music until 2.0: apk upgrade takes this for it.
+provides="b8k-music=$pkgver-r$pkgrel"
+replaces="b8k-music"
 arch="noarch"
 license="GPL-2.0-only"
-depends="python3 py3-gobject3 gtk+3.0 py3-b8k-compat py3-mpv mpv-libs py3-aiohttp py3-aiofiles py3-yarl py3-requests py3-typing-extensions py3-qrcode"
+depends="python3 py3-gobject3 gtk+3.0 py3-haltia-kit py3-mpv mpv-libs py3-aiohttp py3-aiofiles py3-yarl py3-requests py3-typing-extensions py3-qrcode"
 # install.sh fetches the pinned yandex-music and ya-passport-auth wheels.
 options="net"
-source="$pkgname-$pkgver.tar.gz::https://github.com/trudenboy/b8k-music/archive/v$pkgver.tar.gz"
+source="$pkgname-$pkgver.tar.gz::https://github.com/haltia-de/music/archive/v$pkgver.tar.gz"
+# GitHub names the tarball's folder after the repository, not the package.
+builddir="$srcdir/music-$pkgver"
 
 check() {
 	python3 -m unittest
 }
 
 package() {
-	sh ./install.sh "$pkgdir" /usr
+	HALTIA_CACHE="$srcdir" sh ./install.sh "$pkgdir" /usr
 }
 
 # `abuild checksum` fills this in for a release.

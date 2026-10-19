@@ -1,37 +1,48 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Install b8k-music (Музыка): sh install.sh [ROOT] [PREFIX]
+# Install haltia-music (Музыка): sh install.sh [ROOT] [PREFIX]
 # ROOT empty or / for this system; PREFIX /usr/local unless given (a
 # package passes /usr). It needs Python 3 with PyGObject (GTK 3),
-# b8k-compat (github.com/trudenboy/b8k-compat), python-mpv with libmpv,
-# aiohttp, aiofiles, yarl, requests, typing-extensions, and qrcode for
-# signing in by a QR code; the Yandex libraries come as pinned wheels
-# (below). The .desktop file shows it in any desktop's launcher; the b8k
-# tablet shell puts it on its home screen (X-B8K-Home).
+# the kit (github.com/haltia-de/kit), python-mpv with libmpv, aiohttp,
+# aiofiles, yarl, requests, typing-extensions, and qrcode for signing in by
+# a QR code; the Yandex libraries come as pinned wheels (below). The
+# .desktop file shows it in any desktop's launcher; the Haltia shell puts
+# it on its home screen (X-B8K-Home).
 set -eu
 root=${1:-}
 root=${root%/}
 prefix=${2:-/usr/local}
 here=$(cd "$(dirname "$0")" && pwd)
 share=$root$prefix/share
-install -D -m 755 "$here/b8k-music" "$root$prefix/bin/b8k-music"
-lib=$root$prefix/lib/b8k-music
+app=io.github.haltia_de.Music
+old=io.github.trudenboy.Music  # b8k-music before 2.0
+install -D -m 755 "$here/haltia-music" "$root$prefix/bin/haltia-music"
+# The old command, until 3.0.
+ln -sf haltia-music "$root$prefix/bin/b8k-music"
+lib=$root$prefix/lib/haltia-music
 rm -rf "$lib"
-install -D -m 644 "$here/answers.py" "$lib/answers.py"
-install -D -m 644 "$here/likes.py" "$lib/likes.py"
-install -D -m 644 "$here/playback.py" "$lib/playback.py"
+for f in answers likes playback; do
+	install -D -m 644 "$here/$f.py" "$lib/$f.py"
+done
 for f in "$here"/sources/*.py; do
 	install -D -m 644 "$f" "$lib/sources/${f##*/}"
 done
-install -D -m 644 "$here/data/io.github.trudenboy.Music.desktop" "$share/applications/io.github.trudenboy.Music.desktop"
-install -D -m 644 "$here/data/io.github.trudenboy.Music.svg" "$share/icons/hicolor/scalable/apps/io.github.trudenboy.Music.svg"
-install -D -m 644 "$here/data/io.github.trudenboy.Music.metainfo.xml" "$share/metainfo/io.github.trudenboy.Music.metainfo.xml"
-# The shell's old entry for this program, from before the .desktop file.
-rm -f "$root/usr/local/share/b8k/apps.d/music.conf" "$root/usr/local/share/b8k/music.svg"
+install -D -m 644 "$here/data/$app.desktop" "$share/applications/$app.desktop"
+install -D -m 644 "$here/data/$app.svg" "$share/icons/hicolor/scalable/apps/$app.svg"
+install -D -m 644 "$here/data/$app.metainfo.xml" "$share/metainfo/$app.metainfo.xml"
+# The old id's .desktop file, hidden until 3.0: pins and links to it still
+# start the program.
+install -D -m 644 "$here/data/$old.desktop" "$share/applications/$old.desktop"
+# What b8k-music (before 2.0) installed under this prefix, and the shell's
+# old entry for it from before the .desktop file.
+rm -rf "$root$prefix/lib/b8k-music" \
+	"$share/icons/hicolor/scalable/apps/$old.svg" "$share/metainfo/$old.metainfo.xml" \
+	"$root/usr/local/share/b8k/apps.d/music.conf" "$root/usr/local/share/b8k/music.svg"
 # yandex-music (LGPL-3.0, MarshalX) and ya-passport-auth (MIT): the pinned
 # wheels from PyPI, checked against their sha256 and unpacked next to the
-# sources. B8K_CACHE keeps the downloads between builds.
-cache=${B8K_CACHE:-$here/.cache}
+# sources. HALTIA_CACHE (B8K_CACHE until 3.0) keeps the downloads between
+# builds.
+cache=${HALTIA_CACHE:-${B8K_CACHE:-$here/.cache}}
 mkdir -p "$cache"
 while read -r sum url; do
 	whl=${url##*/}

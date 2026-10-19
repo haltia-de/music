@@ -15,7 +15,7 @@ the radio stations by genre, mood, activity and era, and the picks.
 A radio is a rotor session: its seeds are the station and, for a mode of
 Моя волна, the mode's setting.
 
-The account is kept in ~/.local/share/b8k-music/yandex.json (mode 600).
+The account is kept in ~/.local/share/haltia-music/yandex.json (mode 600).
 Streams are the plain (not encrypted) AAC or MP3 of /get-file-info, in the
 quality chosen in the settings: the same levels as the Music Assistant
 provider has.
@@ -26,7 +26,8 @@ import json
 import os
 import threading
 
-ACCOUNT = os.path.expanduser("~/.local/share/b8k-music/yandex.json")
+ACCOUNT = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+                       "haltia-music", "yandex.json")
 WAVE = "user:onyourwave"
 # Stream qualities: id -> (/get-file-info quality, codecs it may choose).
 QUALITY = {

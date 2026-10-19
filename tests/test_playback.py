@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import playback  # noqa: E402
-from b8k_compat.testing import FakePlayer  # noqa: E402
+from haltia_kit.testing import FakePlayer  # noqa: E402
 from tests import fake  # noqa: E402
 from tests.fake import track  # noqa: E402
 
