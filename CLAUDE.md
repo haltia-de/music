@@ -50,7 +50,7 @@ There is no build or linter. Checks available:
 - Debian/Ubuntu: `dpkg-buildpackage -us -uc -b` (`debian/`, Architecture all; tried in docker
   `ubuntu:noble` and `debian:trixie` with lintian). The distribution's libraries, except the two
   Yandex ones, which `install.sh` vendors into `/usr/share/haltia-music` (the program looks there
-  before `PREFIX/lib/haltia-music`). `debian/changelog` follows the release version. Both
+  before `PREFIX/lib/haltia-music`). Both
   packages leave out the names from before 2.0.
 
 ## Architecture
@@ -177,7 +177,9 @@ window taller than the room the on-screen keyboard leaves and hides the top row 
 - Every file starts with `# SPDX-License-Identifier: GPL-2.0`.
 - Commit subjects are a full sentence ending with a period, describing the effect
   (e.g. "Keep the window within the room the on-screen keyboard leaves.").
-- A release is a `vX.Y.Z` tag equal to the APKBUILD's `pkgver` and the newest `<release>` in the
-  metainfo; CI builds the signed apk from it. Every `<release>` carries a `<description>` in
+- A release is a `vX.Y.Z` tag equal to the APKBUILD's `pkgver`, the newest `<release>` in the
+  metainfo and the top of `debian/changelog`; CI (haltia-de/ci) builds from it the signed apk, the
+  noble and trixie debs and the x86_64 Flatpak. Never delete or re-push a tag: GitHub turns its
+  release into a draft. Every `<release>` carries a `<description>` in
   Russian (`<p>` or `<ul><li>`) saying what the person will notice: the shell's updater shows it
   under «Что нового» before installing.

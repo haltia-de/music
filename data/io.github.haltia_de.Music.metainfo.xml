@@ -18,6 +18,12 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="2.3.0" date="2026-10-19">
+      <description>
+        <p>Музыку можно поставить и на обычный компьютер: есть пакеты для Debian,
+        Ubuntu и Flatpak. На планшете ничего не меняется.</p>
+      </description>
+    </release>
     <release version="2.2.1" date="2026-10-19">
       <description>
         <p>Подготовка к установке на другие компьютеры (Flatpak): папки программы
