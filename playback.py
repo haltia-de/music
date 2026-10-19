@@ -18,6 +18,11 @@ Session(source, player, work, later, events):
 
 The player tells it ended(error) at the end of a track and paused(on).
 
+state is "playing" from the tap on a track until the queue runs out (also
+while the next track is being fetched or a broken one gives way), "paused"
+when one paused it, and "stopped" when nothing goes on; changed and playing
+events come with every change of it.
+
 A track one leaves before its end is a skip, paused or not; one that plays
 to its end is finished. A radio says so to its service, which learns from it.
 """
@@ -36,6 +41,7 @@ class Session:
         self.index = -1
         self.radio = None  # the radio playing, or None
         self.playing = False
+        self.going = False  # it plays on, unless paused, till the queue runs out
         self.under_way = False  # the current track plays (or played) its sound
         self.asking = None  # a token while the radio is asked for more
         self.stalled = 0  # tries left when the radio's queue ran out
@@ -43,6 +49,12 @@ class Session:
     @property
     def current(self):
         return self.tracks[self.index] if 0 <= self.index < len(self.tracks) else None
+
+    @property
+    def state(self):
+        if self.current is None or not self.going:
+            return "stopped"
+        return "paused" if self.under_way and not self.playing else "playing"
 
     # --- what the window asks ---------------------------------------------------
     def play_list(self, tracks, i):
@@ -79,7 +91,7 @@ class Session:
             self.player.stop()
         self.tracks, self.index, self.radio = [], -1, None
         self.asking, self.stalled = None, 0
-        self._set_playing(False)
+        self._halt()
         self.events.changed(None)
 
     # --- what the player says ---------------------------------------------------
@@ -97,10 +109,12 @@ class Session:
         if self.index + 1 < len(self.tracks):
             self._start(self.index + 1)
             return
+        if not self.radio:
+            self._halt()
+            return
         self._set_playing(False)
-        if self.radio:
-            self.stalled = 2  # one more try after a failed one, then quiet
-            self._more()
+        self.stalled = 2  # one more try after a failed one, then quiet
+        self._more()
 
     def paused(self, on):
         self._set_playing(on is False)
@@ -123,7 +137,7 @@ class Session:
 
     def _start(self, i):
         self._leave()
-        self.index = i
+        self.index, self.going = i, True
         track = self.tracks[i]
         self.events.changed(track)
         self.work(lambda t: self.src.stream_url(t, self.quality), track,
@@ -146,7 +160,7 @@ class Session:
             self.player.play(url)
         except Exception as exc:
             self.events.failed("Нет проигрывателя (libmpv): %s" % exc)
-            self._set_playing(False)
+            self._halt()
             return
         self.under_way = True
         self._set_playing(True)
@@ -160,8 +174,12 @@ class Session:
         self._set_playing(False)
 
         def go():
-            if self.current is track:
+            if self.current is not track:
+                return
+            if self.index + 1 < len(self.tracks):
                 self.next()
+            else:
+                self._halt()
 
         self.later(GIVE_WAY, go)
 
@@ -195,12 +213,19 @@ class Session:
             self.stalled -= 1
             if self.stalled:
                 self._more()
+            else:
+                self._halt()
 
     def _feedback(self, event, track, seconds):
         send = getattr(self.src, "feedback", None)
         if send:
             radio = self.radio
             self.work(lambda _a: send(radio, event, track, seconds), None, None)
+
+    def _halt(self):
+        """Nothing goes on any more."""
+        self.going = False
+        self._set_playing(False)
 
     def _set_playing(self, on):
         self.playing = on

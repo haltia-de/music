@@ -25,6 +25,8 @@ the service's page, whichever is easier.
 The music goes on while other programs are in front; closing the window
 stops it and quits. While it plays (not paused) a logind inhibitor keeps
 the machine from sleeping when the screen goes off; the screen may go off.
+What plays is told to the desktop by MPRIS, so the Haltia shell marks the
+program's button and can pause or stop the music.
 
 Services are the sources package next to this file (or in
 PREFIX/lib/haltia-music): Яндекс Музыка now, others the same way. Playback
@@ -60,6 +62,7 @@ sys.path.insert(0, HERE if os.path.isdir(os.path.join(HERE, "sources"))
                 else os.path.join(os.path.dirname(HERE), "lib", "haltia-music"))
 import answers  # noqa: E402
 import likes  # noqa: E402
+import mpris  # noqa: E402
 import playback  # noqa: E402
 import sources  # noqa: E402
 
@@ -218,9 +221,19 @@ class Covers:
             self.mem.move_to_end(key)
             image.set_from_pixbuf(pixbuf)
             return
-        path = os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+        path = self.path(url)
         pool = self.disk if os.path.exists(path) else self.net
         pool.submit(self._load, url, path, key, image)
+
+    @staticmethod
+    def path(url):
+        return os.path.join(CACHE, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+
+    def file_uri(self, url):
+        """The cover's file, if it is on disk already."""
+        if url and os.path.exists(self.path(url)):
+            return GLib.filename_to_uri(self.path(url), None)
+        return None
 
     def _load(self, url, path, key, image):
         if not os.path.exists(path):
@@ -268,6 +281,7 @@ class Music(Gtk.Application):
         self.radio_view = None  # the page that shows the radio playing
         self.seeking = False
         self.win = None
+        self.mpris = None  # what plays, told to the desktop
         events = SimpleNamespace(changed=self.on_track, grew=self.on_grew,
                                  playing=self.on_playing, failed=self.say)
         # The player keeps the machine awake while it plays, not paused.
@@ -327,6 +341,12 @@ class Music(Gtk.Application):
             self.show_main()
         else:
             self.show_login()
+        try:
+            self.mpris = mpris.Mpris(self.get_dbus_connection(), APP_ID, "Музыка",
+                                     self.session, self.stop, self.win.present,
+                                     lambda track: self.covers.file_uri(track.get("cover")))
+        except (GLib.Error, AttributeError) as exc:  # no session bus: no MPRIS
+            sys.stderr.write("haltia-music: no MPRIS: %s\n" % exc)
 
     def on_close(self, *_a):
         # Closing is meant: the music stops with the window.
@@ -948,6 +968,8 @@ class Music(Gtk.Application):
         view["play"].hide()
 
     def on_track(self, track):
+        if self.mpris:
+            self.mpris.changed()
         if track is None:
             if self.bar:
                 self.bar.hide()
@@ -981,6 +1003,8 @@ class Music(Gtk.Application):
         return False
 
     def on_playing(self, on):
+        if self.mpris:
+            self.mpris.changed()
         if self.bar:
             self.play_btn.set_label("⏸" if on else "▶")
 

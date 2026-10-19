@@ -182,5 +182,44 @@ class Radio(Case):
         self.assertEqual(self.s.current["id"], "2")
 
 
+class State(Case):
+    def setUp(self):
+        super().setUp()
+        self.player.on_pause = self.s.paused
+
+    def test_playing_paused_stopped(self):
+        self.assertEqual(self.s.state, "stopped")
+        self.s.play_list([track(1), track(2)], 0)
+        self.assertEqual(self.s.state, "playing")
+        self.s.toggle()
+        self.assertEqual(self.s.state, "paused")
+        self.s.toggle()
+        self.s.stop()
+        self.assertEqual(self.s.state, "stopped")
+
+    def test_playing_while_the_next_is_fetched(self):
+        self.s.play_list([track(1), track(2)], 0)
+        self.work.held = True
+        self.s.ended()
+        self.assertEqual(self.s.state, "playing")
+        self.work.run()
+        self.s.ended()
+        self.assertEqual(self.s.state, "stopped")
+
+    def test_playing_while_a_broken_one_gives_way(self):
+        self.src.broken.add("1")
+        self.s.play_list([track(1)], 0)
+        self.assertEqual(self.s.state, "playing")
+        self.later.fire()
+        self.assertEqual(self.s.state, "stopped")
+        self.assertIs(self.events.on, False)
+
+    def test_a_radio_that_runs_dry_stops(self):
+        self.src.batches = [[], [], []]
+        self.s.play_radio("r", [track(1)], 0)
+        self.s.ended()
+        self.assertEqual(self.s.state, "stopped")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -42,7 +42,7 @@ a sign shown when there is no cover. A list opens to its tracks, a radio
 plays on and on, a folder holds more items.
 
 A track is a dict: kind "track", source, id, title, artist, duration
-(seconds or None), cover.
+(seconds or None), cover, and optionally album (its title).
 
 A source may block (network): haltia-music calls it from a worker thread.
 """

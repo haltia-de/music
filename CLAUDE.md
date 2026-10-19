@@ -29,7 +29,7 @@ There is no build or linter. Checks available:
   importable (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/haltia-music` after an `install.sh` into a
   scratch ROOT).
 - `sh install.sh [ROOT] [PREFIX]` — PREFIX `/usr/local` by default, `/usr` from the APKBUILD
-  (`packaging/alpine/`); the device repo pins a tag and builds the tablet image from it. Installs
+  (`packaging/alpine/`). Installs
   the program to `PREFIX/bin`, the top-level `*.py` modules and `sources/` to `PREFIX/lib/haltia-music`
   (a new module needs a line there; the program finds that folder from its own path), `data/` (the
   `.desktop` file with `X-B8K-Home`/`X-B8K-Replaces=music`, hicolor icon, metainfo) to
@@ -47,7 +47,8 @@ There is no build or linter. Checks available:
   while playing and not paused), `Settings`, `dialogs` (questions inside the window). The look
   (large header and dialogs) comes from the desktop's GTK theme; the shell buzzes touches itself.
 - `playback.py` — `Session`, what plays (see Playback below); `answers.py` — `Answers`, the
-  service's answers kept (see Caching); `likes.py` — `Likes`, the hearts. No GTK; each docstring is its module's interface.
+  service's answers kept (see Caching); `likes.py` — `Likes`, the hearts; `mpris.py` — `Mpris`,
+  what plays told to the desktop (see Playback). No GTK; each docstring is its module's interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
   adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import,
@@ -128,6 +129,12 @@ it (`on_end` → `ended()`, `on_error` → `ended(text)`, `on_pause` → `paused
   changes at once, one request per track is in flight and the service ends with the last tap; a
   failure reverts to the confirmed state. Liked ids come via `answers` (`refresh()` on the first
   page, forced on the house button); confirmed taps stay on until an answer shows them.
+- MPRIS: `self.mpris` owns `org.mpris.MediaPlayer2.<APP_ID>` on the application's bus
+  (`DesktopEntry` = `APP_ID`, by which the Haltia shell maps it to the panel button, marks ▶/‖ and
+  offers «Пауза»/«Стоп»). `PlaybackStatus` is `Session.state` («playing» also while the next track
+  is fetched or a broken one gives way, so the mark does not flicker); `on_track` and `on_playing`
+  call `mpris.changed()`. Its tests (`tests/test_mpris.py`) run on a bus of their own and need
+  `dbus-daemon` (the APKBUILD's `checkdepends`), skipped without it.
 - The machine stays awake while the player plays and is not paused (the kit's logind
   inhibitor; it registers only for a process inside the graphical session). A track that gives way
   stops the player, so nothing holds the machine meanwhile.
@@ -151,3 +158,7 @@ window taller than the room the on-screen keyboard leaves and hides the top row 
 - Every file starts with `# SPDX-License-Identifier: GPL-2.0`.
 - Commit subjects are a full sentence ending with a period, describing the effect
   (e.g. "Keep the window within the room the on-screen keyboard leaves.").
+- A release is a `vX.Y.Z` tag equal to the APKBUILD's `pkgver` and the newest `<release>` in the
+  metainfo; CI builds the signed apk from it. Every `<release>` carries a `<description>` in
+  Russian (`<p>` or `<ul><li>`) saying what the person will notice: the shell's updater shows it
+  under «Что нового» before installing.

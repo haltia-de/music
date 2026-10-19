@@ -21,7 +21,7 @@ install -D -m 755 "$here/haltia-music" "$root$prefix/bin/haltia-music"
 ln -sf haltia-music "$root$prefix/bin/b8k-music"
 lib=$root$prefix/lib/haltia-music
 rm -rf "$lib"
-for f in answers likes playback; do
+for f in answers likes mpris playback; do
 	install -D -m 644 "$here/$f.py" "$lib/$f.py"
 done
 for f in "$here"/sources/*.py; do

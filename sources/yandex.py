@@ -107,6 +107,7 @@ def _track(t):
         "id": str(t.id),
         "title": t.title or "",
         "artist": artists,
+        "album": (t.albums[0].title or "") if t.albums else "",
         "duration": (t.duration_ms or 0) / 1000 or None,
         "cover": _cover(t.cover_uri),
     }
