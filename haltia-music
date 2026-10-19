@@ -49,6 +49,8 @@ APP_ID = "io.github.haltia_de.Music"
 # Under Wayland GTK 3 names the window by the program name: the program's
 # id, as its .desktop file is named, so a desktop or the Haltia shell finds it.
 GLib.set_prgname(APP_ID)
+# The Haltia shell puts its own ✕ on every window; other desktops need theirs.
+ON_HALTIA = "Haltia" in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
@@ -310,6 +312,7 @@ class Music(Gtk.Application):
         self.win.set_default_size(1160, 800)
         self.win.connect("delete-event", self.on_close)
         header = Gtk.HeaderBar(title="Музыка")
+        header.set_show_close_button(not ON_HALTIA)
         self.back_btn = styled(Gtk.Button(label="←"), "back")
         self.back_btn.connect("clicked", lambda *_a: self.go_back())
         self.home_btn = styled(Gtk.Button.new_from_icon_name("go-home-symbolic",

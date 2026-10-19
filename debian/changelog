@@ -1,3 +1,10 @@
+haltia-music (2.3.1) unstable; urgency=medium
+
+  * Outside the Haltia shell the window has the desktop's buttons, close
+    among them.
+
+ -- Haltia <rensomail@gmail.com>  Mon, 19 Oct 2026 23:05:00 +0300
+
 haltia-music (2.3.0) unstable; urgency=medium
 
   * Packages for Debian, Ubuntu and Flatpak.
