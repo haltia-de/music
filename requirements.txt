@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 # The Python libraries Музыка needs, at the versions it runs with on the
 # tablet (Alpine 3.24), for flatpak-pip-generator. Not listed: PyGObject
-# (the GNOME runtime), haltia-kit (github.com/haltia-de/kit), libsecret and
-# libmpv (system libraries). yandex-music and ya-passport-auth are the
-# wheels install.sh pins.
+# (the GNOME runtime; haltia-kit asks for it), libsecret and libmpv (system
+# libraries). yandex-music and ya-passport-auth are the wheels install.sh
+# pins; haltia-kit is not on PyPI, so it comes from its tag.
+haltia-kit @ git+https://github.com/haltia-de/kit@v2.1.0
 yandex-music==3.2.1
 ya-passport-auth==1.8.0
 python-mpv==1.0.8

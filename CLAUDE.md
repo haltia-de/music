@@ -9,6 +9,8 @@ desktop program: it depends on no shell and meets one only through freedesktop s
 [device-lenovo-b8000h](https://github.com/haltia-de/device-lenovo-b8000h). Touch targets, Russian
 UI, music plays while the window is behind other programs. It is headed for Flatpak and deb too
 (device repo `docs/plan-desktop-packages.md`): no fixed `/usr` paths, nothing that needs the shell,
+user folders only from `GLib.get_user_config_dir()`/`get_user_data_dir()`/`get_user_cache_dir()`
+(inside Flatpak `~` is the real home but unreadable, so never `expanduser("~/…")`),
 and `requirements.txt` pins every Python library (for flatpak-pip-generator) at the versions the
 tablet runs; keep it in step with the APKBUILD's `depends` and `install.sh`'s wheels.
 

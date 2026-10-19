@@ -26,10 +26,12 @@ import datetime
 import os
 import threading
 
+from gi.repository import GLib
+
 import vault
 
-ACCOUNT = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
-                       "haltia-music", "yandex.json")
+# GLib's, not ~: inside Flatpak the home is there but not to be read.
+ACCOUNT = os.path.join(GLib.get_user_data_dir(), "haltia-music", "yandex.json")
 # The keyring's entry is the program's: io.github.haltia_de.Music, account "yandex".
 VAULT = vault.Vault("yandex", ACCOUNT, vault.keyring("io.github.haltia_de.Music", "Музыка"))
 WAVE = "user:onyourwave"
