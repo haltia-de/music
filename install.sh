@@ -4,7 +4,8 @@
 # ROOT empty or / for this system; PREFIX /usr/local unless given (a
 # package passes /usr). It needs Python 3 with PyGObject (GTK 3),
 # the kit (github.com/haltia-de/kit), python-mpv with libmpv, aiohttp,
-# aiofiles, yarl, requests, typing-extensions, and qrcode for signing in by
+# aiofiles, yarl, requests, typing-extensions, libsecret (the keyring, if
+# any), and qrcode for signing in by
 # a QR code; the Yandex libraries come as pinned wheels (below). The
 # .desktop file shows it in any desktop's launcher; the Haltia shell puts
 # it on its home screen (X-B8K-Home).
@@ -21,7 +22,7 @@ install -D -m 755 "$here/haltia-music" "$root$prefix/bin/haltia-music"
 ln -sf haltia-music "$root$prefix/bin/b8k-music"
 lib=$root$prefix/lib/haltia-music
 rm -rf "$lib"
-for f in answers likes mpris playback; do
+for f in answers likes mpris playback vault; do
 	install -D -m 644 "$here/$f.py" "$lib/$f.py"
 done
 for f in "$here"/sources/*.py; do

@@ -42,12 +42,14 @@ Apple Music и другие добавляются так же, файлом в 
 Нужны Python 3 с PyGObject (GTK 3),
 [haltia-kit](https://github.com/haltia-de/kit) (звук, настройки,
 вопросы), python-mpv с libmpv, aiohttp, aiofiles, yarl, requests и
-typing-extensions; для QR-кода — qrcode. Установка: `sh install.sh [ROOT]
+typing-extensions; для QR-кода — qrcode, для связки ключей — libsecret
+(необязательно). Точные версии библиотек Python — в `requirements.txt`. Установка: `sh install.sh [ROOT]
 [PREFIX]` (PREFIX — `/usr/local`, если не указан) — ставит программу,
 `.desktop`-файл, значок и metainfo, скачивает обе библиотеки Яндекса с PyPI
 и сверяет их sha256. Для Alpine — `packaging/alpine/APKBUILD`.
 
-Вход хранится в `~/.local/share/haltia-music/yandex.json` (права 600), обложки —
+Вход хранится в связке ключей рабочего стола (Secret Service), а где её нет — в
+`~/.local/share/haltia-music/yandex.json` (права 600). Обложки —
 в `~/.cache/haltia-music/`. Неофициальный клиент; без подписки Плюс часть
 треков может не играть.
 

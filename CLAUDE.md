@@ -5,9 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 haltia-music (Музыка, id `io.github.haltia_de.Music`, repo `haltia-de/music`) is a GTK 3 music
 player of the Haltia desktop, made for the Lenovo YOGA Tablet 10 (B8000-H), but a self-contained
 desktop program: it depends on no shell and meets one only through freedesktop standards (its
-`.desktop` file, a logind inhibitor), per ADR 0001 in
+`.desktop` file, an inhibitor, MPRIS, the Secret Service), per ADR 0001 in
 [device-lenovo-b8000h](https://github.com/haltia-de/device-lenovo-b8000h). Touch targets, Russian
-UI, music plays while the window is behind other programs.
+UI, music plays while the window is behind other programs. It is headed for Flatpak and deb too
+(device repo `docs/plan-desktop-packages.md`): no fixed `/usr` paths, nothing that needs the shell,
+and `requirements.txt` pins every Python library (for flatpak-pip-generator) at the versions the
+tablet runs; keep it in step with the APKBUILD's `depends` and `install.sh`'s wheels.
 
 Before 2.0 it was `b8k-music` / `io.github.trudenboy.Music` (ADR 0004 renamed it). Until 3.0 keep:
 the `b8k-music` command (a link), the hidden old `.desktop`, `provides`/`replaces="b8k-music"` in
@@ -25,7 +28,7 @@ There is no build or linter. Checks available:
   (`PYTHONPATH=/mnt/data/Projects/b8k-compat`, the kit's checkout). Not installed; the APKBUILD runs them.
 - `python3 -m py_compile haltia-music *.py sources/*.py` — syntax check.
 - `python3 haltia-music` — run from the checkout (finds `sources/` next to itself). Needs
-  PyGObject, haltia-kit, python-mpv/libmpv, qrcode, and `yandex_music` + `ya_passport_auth`
+  PyGObject, haltia-kit, python-mpv/libmpv, qrcode, libsecret (optional), and `yandex_music` + `ya_passport_auth`
   importable (pip, or `PYTHONPATH=<ROOT>/usr/local/lib/haltia-music` after an `install.sh` into a
   scratch ROOT).
 - `sh install.sh [ROOT] [PREFIX]` — PREFIX `/usr/local` by default, `/usr` from the APKBUILD
@@ -48,7 +51,7 @@ There is no build or linter. Checks available:
   (large header and dialogs) comes from the desktop's GTK theme; the shell buzzes touches itself.
 - `playback.py` — `Session`, what plays (see Playback below); `answers.py` — `Answers`, the
   service's answers kept (see Caching); `likes.py` — `Likes`, the hearts; `mpris.py` — `Mpris`,
-  what plays told to the desktop (see Playback). No GTK; each docstring is its module's interface.
+  what plays told to the desktop (see Playback); `vault.py` — `Vault`, where a sign-in is kept. No GTK; each docstring is its module's interface.
 - `sources/` — music services. `sources/__init__.py` docstring is the source interface contract
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
   adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import,
@@ -57,8 +60,11 @@ There is no build or linter. Checks available:
   contract (e.g. `likes_list`), and `tests/fake.py`'s `Source` keeps to it too
   (`tests/test_contract.py`). Adding a service = adding a file there, no change to `haltia-music`.
 - `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they share one event loop on a
-  daemon thread (`_Loop`) and every public method blocks on its result. Account (tokens) in
-  `~/.local/share/haltia-music/yandex.json`, mode 600, written atomically via `.new` + `os.replace`.
+  daemon thread (`_Loop`) and every public method blocks on its result. Account (tokens) kept
+  by `vault.py` (`Vault`): in the Secret Service (libsecret; schema `io.github.haltia_de.Music`,
+  attribute `account=yandex`), or, where no keyring answers (the tablet has none), in
+  `~/.local/share/haltia-music/yandex.json`, mode 600. A file is the newest: it moves into the
+  keyring when one answers and is deleted only once the keyring holds it.
   Token renewal: music token from x_token, falling back to the refresh token.
   - Login runs QR and device-code flows at once; `login_wait` takes whichever confirms first. The QR
     session lives in the `PassportClient`'s cookie jar, so that client stays open from

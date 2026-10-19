@@ -18,6 +18,13 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="2.2.0" date="2026-10-19">
+      <description>
+        <p>Вход в Яндекс Музыку хранится в связке ключей рабочего стола, а не в открытом
+        файле. Где связки нет, как на планшете, всё остаётся как было; входить заново
+        не нужно.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-10-19">
       <description>
         <p>Значок проигрывания на кнопке панели: ▶ пока играет, ‖ на паузе. Тап по кнопке

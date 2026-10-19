@@ -15,19 +15,23 @@ the radio stations by genre, mood, activity and era, and the picks.
 A radio is a rotor session: its seeds are the station and, for a mode of
 Моя волна, the mode's setting.
 
-The account is kept in ~/.local/share/haltia-music/yandex.json (mode 600).
+The account (its tokens) is kept in the desktop's keyring; where none
+answers, in ~/.local/share/haltia-music/yandex.json (mode 600). See vault.py.
 Streams are the plain (not encrypted) AAC or MP3 of /get-file-info, in the
 quality chosen in the settings: the same levels as the Music Assistant
 provider has.
 """
 import asyncio
 import datetime
-import json
 import os
 import threading
 
+import vault
+
 ACCOUNT = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
                        "haltia-music", "yandex.json")
+# The keyring's entry is the program's: io.github.haltia_de.Music, account "yandex".
+VAULT = vault.Vault("yandex", ACCOUNT, vault.keyring("io.github.haltia_de.Music", "Музыка"))
 WAVE = "user:onyourwave"
 # Stream qualities: id -> (/get-file-info quality, codecs it may choose).
 QUALITY = {
@@ -192,19 +196,12 @@ class Yandex:
     # --- the account ------------------------------------------------------
     @staticmethod
     def _saved():
-        try:
-            with open(ACCOUNT, encoding="utf-8") as fh:
-                return json.load(fh)
-        except (OSError, ValueError):
-            return None
+        saved = VAULT.load()
+        return dict(saved) if saved else None
 
     @staticmethod
     def _save(data):
-        os.makedirs(os.path.dirname(ACCOUNT), mode=0o700, exist_ok=True)
-        fd = os.open(ACCOUNT + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(ACCOUNT + ".new", ACCOUNT)
+        VAULT.save(data)
 
     def _run(self, coro, timeout=120):
         if self._loop is None:
@@ -227,7 +224,7 @@ class Yandex:
             device = qr = None
             try:
                 async with PassportClient.create() as client:
-                    device = await client.start_device_login(device_name="B8000-H")
+                    device = await client.start_device_login(device_name=os.uname().nodename or "Haltia")
             except Exception:
                 pass
             # The QR session lives in the client's cookies: it stays open
@@ -311,10 +308,7 @@ class Yandex:
         return True
 
     def logout(self):
-        try:
-            os.unlink(ACCOUNT)
-        except OSError:
-            pass
+        VAULT.delete()
         self._client = None
         self._radio = {}
 
