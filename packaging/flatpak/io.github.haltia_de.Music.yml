@@ -1,0 +1,39 @@
+# Музыка as a Flatpak:
+#   flatpak run org.flatpak.Builder --user --install --force-clean build packaging/flatpak/io.github.haltia_de.Music.yml
+# Python 3, PyGObject, GTK 3 and libsecret come with the GNOME runtime;
+# haltia-kit (with python-mpv), libmpv for sound, and the Python libraries
+# of requirements.txt are modules here. Built from this checkout (CI checks
+# out the tag).
+id: io.github.haltia_de.Music
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: haltia-music
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio
+  # MPRIS: what plays, for the desktop's player controls
+  - --own-name=org.mpris.MediaPlayer2.io.github.haltia_de.Music
+cleanup:
+  - '*.la'
+  - '*.a'
+modules:
+  - libmpv.yml
+  - haltia-kit.yml
+  - python3-requirements.yml
+  - name: haltia-music
+    buildsystem: simple
+    build-commands:
+      - HALTIA_WHEELS=no sh install.sh "" /app
+      # The names from before ADR 0004 are for the Haltia tablet only.
+      - rm -f /app/bin/b8k-music /app/share/applications/io.github.trudenboy.Music.desktop
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - .flatpak-builder

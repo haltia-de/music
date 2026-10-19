@@ -46,7 +46,8 @@ typing-extensions; для QR-кода — qrcode, для связки ключе
 (необязательно). Точные версии библиотек Python — в `requirements.txt`. Установка: `sh install.sh [ROOT]
 [PREFIX]` (PREFIX — `/usr/local`, если не указан) — ставит программу,
 `.desktop`-файл, значок и metainfo, скачивает обе библиотеки Яндекса с PyPI
-и сверяет их sha256. Для Alpine — `packaging/alpine/APKBUILD`.
+и сверяет их sha256. Пакеты: Alpine — `packaging/alpine/APKBUILD`, Flatpak —
+`packaging/flatpak/io.github.haltia_de.Music.yml`, Debian и Ubuntu — `debian/`.
 
 Вход хранится в связке ключей рабочего стола (Secret Service), а где её нет — в
 `~/.local/share/haltia-music/yandex.json` (права 600). Обложки —

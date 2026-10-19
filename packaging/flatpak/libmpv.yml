@@ -1,0 +1,65 @@
+# libmpv for sound only (haltia_kit.sound): no video outputs, no player
+# program, no scripts. ffmpeg comes with the runtime (its AAC through the
+# runtime's codecs-extra extension); mpv also needs libass and libplacebo,
+# built here first. Flathub's shared-modules has no libmpv.
+name: libmpv
+buildsystem: meson
+config-opts:
+  - -Dlibmpv=true
+  - -Dcplayer=false
+  - -Dbuildtype=release
+  - -Dauto_features=disabled
+  - -Dpulse=enabled
+  - -Dpipewire=enabled
+  - -Dalsa=enabled
+  - -Dlibavdevice=disabled
+  - -Dgl=disabled
+  - -Diconv=enabled
+  - -Dzlib=enabled
+  - -Dmanpage-build=disabled
+  - -Dhtml-build=disabled
+  - -Dpdf-build=disabled
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share
+sources:
+  - type: archive
+    url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
+    sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+modules:
+  - name: libass
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        sha256: 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Dbuildtype=release
+      - -Dvulkan=disabled
+      - -Dopengl=disabled
+      - -Dd3d11=disabled
+      - -Dglslang=disabled
+      - -Dshaderc=disabled
+      - -Dlcms=disabled
+      - -Ddovi=disabled
+      - -Dlibdovi=disabled
+      - -Dxxhash=disabled
+      - -Dunwind=disabled
+      - -Ddemos=false
+      - -Dtests=false
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: git
+        url: https://github.com/haasn/libplacebo.git
+        tag: v7.360.1
+        commit: cee9b076f2c63104ccfd497fa79c39a867293ec4

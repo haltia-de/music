@@ -42,7 +42,9 @@ rm -rf "$root$prefix/lib/b8k-music" \
 # yandex-music (LGPL-3.0, MarshalX) and ya-passport-auth (MIT): the pinned
 # wheels from PyPI, checked against their sha256 and unpacked next to the
 # sources. HALTIA_CACHE (B8K_CACHE until 3.0) keeps the downloads between
-# builds.
+# builds. HALTIA_WHEELS=no leaves them to the package (Flatpak installs
+# them with pip).
+[ "${HALTIA_WHEELS:-}" = no ] && exit 0
 cache=${HALTIA_CACHE:-${B8K_CACHE:-$here/.cache}}
 mkdir -p "$cache"
 while read -r sum url; do

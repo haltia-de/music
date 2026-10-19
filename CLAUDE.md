@@ -41,6 +41,17 @@ There is no build or linter. Checks available:
   `PREFIX/share`, and removes the shell's old `apps.d/music.conf` entry. Downloads pinned wheels
   (sha256-checked, cached in `$HALTIA_CACHE` or `.cache/`) and unpacks them into the lib folder.
   Bumping a library means updating both URL and sum in the `WHEELS` heredoc.
+- Flatpak: `flatpak run org.flatpak.Builder --user --install --force-clean build
+  packaging/flatpak/io.github.haltia_de.Music.yml` (from the checkout: the builder cannot see
+  /tmp). Modules: `libmpv.yml` (sound-only libmpv with libass and libplacebo; ffmpeg is the
+  runtime's), `haltia-kit.yml` (a copy of the kit's), `python3-requirements.yml` (written by
+  `requirements.py` from `requirements.txt`: run it after changing that), then `install.sh` with
+  `HALTIA_WHEELS=no`. Its data is in `~/.var/app/io.github.haltia_de.Music/`.
+- Debian/Ubuntu: `dpkg-buildpackage -us -uc -b` (`debian/`, Architecture all; tried in docker
+  `ubuntu:noble` and `debian:trixie` with lintian). The distribution's libraries, except the two
+  Yandex ones, which `install.sh` vendors into `/usr/share/haltia-music` (the program looks there
+  before `PREFIX/lib/haltia-music`). `debian/changelog` follows the release version. Both
+  packages leave out the names from before 2.0.
 
 ## Architecture
 

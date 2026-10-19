@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+# install.sh fetches the pinned yandex-music and ya-passport-auth wheels
+# (sha256-checked; HALTIA_CACHE keeps them) and unpacks them into the
+# program's folder; Debian keeps such private modules in /usr/share.
+override_dh_auto_install:
+	sh install.sh $(CURDIR)/debian/haltia-music /usr
+	mv debian/haltia-music/usr/lib/haltia-music debian/haltia-music/usr/share/
+	rmdir debian/haltia-music/usr/lib
+	# The names from before ADR 0004 are for the Haltia tablet only.
+	rm -f debian/haltia-music/usr/bin/b8k-music \
+		debian/haltia-music/usr/share/applications/io.github.trudenboy.Music.desktop
+
+# The tests need haltia-kit, which is no build dependency; the APKBUILD runs them.
+override_dh_auto_test:

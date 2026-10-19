@@ -57,9 +57,13 @@ from haltia_kit import dialogs, paths, sound  # noqa: E402
 from haltia_kit.settings import Settings  # noqa: E402
 from gi.repository import Gdk, GdkPixbuf, Gtk, Pango  # noqa: E402
 
+# The modules: next to the program in a checkout, else PREFIX/share/haltia-music
+# (Debian) or PREFIX/lib/haltia-music (install.sh, Alpine, Flatpak).
 HERE = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, HERE if os.path.isdir(os.path.join(HERE, "sources"))
-                else os.path.join(os.path.dirname(HERE), "lib", "haltia-music"))
+LIB = next((d for d in (HERE, os.path.join(os.path.dirname(HERE), "share", "haltia-music"))
+            if os.path.isdir(os.path.join(d, "sources"))),
+           os.path.join(os.path.dirname(HERE), "lib", "haltia-music"))
+sys.path.insert(0, LIB)
 import answers  # noqa: E402
 import likes  # noqa: E402
 import mpris  # noqa: E402
