@@ -66,7 +66,7 @@ python3-orjson — там Music Assistant есть во Flatpak). План и р
 
 ## Установка
 
-**Ubuntu 24.04, Debian 13** (и elementary OS 8, Linux Mint 22) — из
+**Ubuntu 24.04 и 26.04, Debian 13** (и elementary OS 8, Linux Mint 22) — из
 репозитория apt Haltia:
 
 ```
