@@ -18,6 +18,12 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="2.4.1" date="2026-10-20">
+      <description>
+        <p>The Liked tile on the home page is red again.</p>
+        <p xml:lang="ru">Плитка «Мне нравится» на главной снова красная.</p>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-10-20">
       <description>
         <p>The settings have a Sources section: a card per music service with a switch, the account and signing in and out. Signing in moved there; the home page leads to it. Saved pages and the sound quality stay as they were.</p>

@@ -1,3 +1,9 @@
+haltia-music (2.4.1) unstable; urgency=medium
+
+  * The Liked tile on the home page is red again.
+
+ -- Haltia <rensomail@gmail.com>  Tue, 20 Oct 2026 13:05:00 +0300
+
 haltia-music (2.4.0) unstable; urgency=medium
 
   * The settings have a Sources section, a card per service with a switch,

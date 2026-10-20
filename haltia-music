@@ -827,7 +827,7 @@ class Music(Gtk.Application):
         for item in items:
             btn = styled(Gtk.Button(), "card")
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            box.pack_start(self.cover(item, CARD, 56), False, False, 0)
+            box.pack_start(self.cover(item, CARD, 56, view.get("src")), False, False, 0)
             ttl = styled(Gtk.Label(label=item["title"], xalign=0), "ttl")
             ttl.set_line_wrap(True)
             ttl.set_lines(2)
@@ -847,7 +847,7 @@ class Music(Gtk.Application):
         section.set_no_show_all(False)
         section.show_all()
 
-    def cover(self, item, size, glyph_px, src=None):
+    def cover(self, item, size, glyph_px, src):
         if item.get("cover"):
             image = Gtk.Image()
             image.set_size_request(size, size)
