@@ -21,7 +21,9 @@
     <release version="3.0.0" date="2026-10-20">
       <description>
         <p>Music Assistant is a second source: sign in to a server of your own in Settings → Sources, and Music plays its queue as one of its players, with its home page, browsing, search and favourites. With both sources on, a button in the header switches between them. The names from before 2.0 (the b8k-music command and the old program id) are gone.</p>
+        <p>The Flatpak plays sound again: since 2.3.0 it played none.</p>
         <p xml:lang="ru">Второй источник — Music Assistant: войдите в свой сервер в «Настройки → Источники», и Музыка будет играть его очередь как один из его проигрывателей, с его главной, обзором, поиском и избранным. Когда включены оба источника, кнопка в шапке переключает между ними. Старые имена до 2.0 (команда b8k-music и прежний id программы) убраны.</p>
+        <p xml:lang="ru">Во Flatpak снова есть звук: с 2.3.0 он там не играл.</p>
       </description>
     </release>
     <release version="2.4.1" date="2026-10-20">
@@ -44,27 +46,26 @@
     </release>
     <release version="2.3.0" date="2026-10-19">
       <description>
-        <p>Музыку можно поставить и на обычный компьютер: есть пакеты для Debian,
-        Ubuntu и Flatpak. На планшете ничего не меняется.</p>
+        <p>Music can be installed on an ordinary computer too: there are packages for Debian, Ubuntu and Flatpak. Nothing changes on the tablet.</p>
+        <p xml:lang="ru">Музыку можно поставить и на обычный компьютер: есть пакеты для Debian, Ubuntu и Flatpak. На планшете ничего не меняется.</p>
       </description>
     </release>
     <release version="2.2.1" date="2026-10-19">
       <description>
-        <p>Подготовка к установке на другие компьютеры (Flatpak): папки программы
-        находятся стандартным способом. На планшете ничего не меняется.</p>
+        <p>Getting ready for other computers (Flatpak): the program finds its folders the standard way. Nothing changes on the tablet.</p>
+        <p xml:lang="ru">Подготовка к установке на другие компьютеры (Flatpak): папки программы находятся стандартным способом. На планшете ничего не меняется.</p>
       </description>
     </release>
     <release version="2.2.0" date="2026-10-19">
       <description>
-        <p>Вход в Яндекс Музыку хранится в связке ключей рабочего стола, а не в открытом
-        файле. Где связки нет, как на планшете, всё остаётся как было; входить заново
-        не нужно.</p>
+        <p>The Яндекс Музыка sign-in is kept in the desktop's keyring, not in a plain file. Where there is no keyring, as on the tablet, everything stays as it was; there is no need to sign in again.</p>
+        <p xml:lang="ru">Вход в Яндекс Музыку хранится в связке ключей рабочего стола, а не в открытом файле. Где связки нет, как на планшете, всё остаётся как было; входить заново не нужно.</p>
       </description>
     </release>
     <release version="2.1.0" date="2026-10-19">
       <description>
-        <p>Значок проигрывания на кнопке панели: ▶ пока играет, ‖ на паузе. Тап по кнопке
-        предлагает «Пауза» и «Стоп», не открывая Музыку.</p>
+        <p>A playback mark on the panel button: ▶ while it plays, ‖ when paused. A tap on the button offers «Pause» and «Stop» without opening Music.</p>
+        <p xml:lang="ru">Значок проигрывания на кнопке панели: ▶ пока играет, ‖ на паузе. Тап по кнопке предлагает «Пауза» и «Стоп», не открывая Музыку.</p>
       </description>
     </release>
     <release version="2.0.1" date="2026-10-19"/>

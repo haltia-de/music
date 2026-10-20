@@ -209,6 +209,8 @@ read it before touching how sources, sign-in or `Session` are shaped.
 - A release is a `vX.Y.Z` tag equal to the APKBUILD's `pkgver`, the newest `<release>` in the
   metainfo and the top of `debian/changelog`; CI (haltia-de/ci) builds from it the signed apk, the
   noble and trixie debs and the x86_64 Flatpak. Never delete or re-push a tag: GitHub turns its
-  release into a draft. Every `<release>` carries a `<description>` in
-  Russian (`<p>` or `<ul><li>`) saying what the person will notice: the shell's updater shows it
-  under «Что нового» before installing.
+  release into a draft. Release notes are written in `NEWS.md` (`## X.Y.Z (YYYY-MM-DD)`, then
+  `### Русский` and `### English`), both languages, saying what the person will notice; then
+  haltia-de/ci's `news.py metainfo NEWS.md data/io.github.haltia_de.Music.metainfo.xml` writes the
+  metainfo's `<releases>` (CI checks they match). The shell's updater shows the Russian under
+  «Что нового» before installing.
