@@ -53,7 +53,9 @@ class Case(unittest.TestCase):
             pass
 
         self.q._ready = ready
-        self.q.sound = type("Sound", (), {"player_id": "me"})()
+        self.flushed = []
+        self.q.sound = type("Sound", (), {"player_id": "me",
+                                          "flush": lambda _s: self.flushed.append(1)})()
 
     def asked(self):
         return [(c, a) for c, a in self.src.asked if c != "player_queues/items"]
@@ -82,9 +84,10 @@ class Case(unittest.TestCase):
         self.q.seek(42.7)
         self.q.jump(1)
         self.assertEqual([c for c, _a in self.asked()[1:]],
-                         ["player_queues/next", "player_queues/play_pause",
+                         ["player_queues/next", "player_queues/pause",
                           "player_queues/seek", "player_queues/play_index"])
         self.assertEqual(self.asked()[3][1]["position"], 42)
+        self.assertEqual(len(self.flushed), 5)  # play, next, toggle, seek, jump
 
     def test_what_the_server_says_plays(self):
         tracks = [mine(1), mine(2)]
@@ -95,6 +98,7 @@ class Case(unittest.TestCase):
                                                        "media_item": media(2)}})
         self.assertIs(self.q.current, tracks[1])
         self.assertEqual(self.events.tracks[-1], tracks[1])
+        self.q._asked = 0  # long after the command: what the server says goes
         self.q._got("queue_updated", {"state": "paused", "current_index": 1,
                                       "elapsed_time": 50,
                                       "current_item": {"queue_item_id": "b",
@@ -102,6 +106,26 @@ class Case(unittest.TestCase):
         self.assertEqual(self.q.state, "paused")
         self.assertFalse(self.events.on)
         self.assertEqual(self.q.position, 50)
+
+    def test_the_server_names_a_track_by_its_library(self):
+        tracks = [mine(1), mine(2)]
+        self.q.play_list(tracks, 0)
+        library = {"uri": "library://track/77", "name": "Трек 2", "media_type": "track",
+                   "provider_mappings": [{"provider_instance": YM, "item_id": "2"}]}
+        self.q._got("queue_updated", {"state": "playing", "current_index": 1,
+                                      "current_item": {"queue_item_id": "b",
+                                                       "media_item": library}})
+        self.assertIs(self.q.current, tracks[1])
+        self.assertEqual(self.q.tracks, tracks)
+
+    def test_a_queue_changed_elsewhere_is_read_again(self):
+        self.q.play_list([mine(1)], 0)
+        self.src.items = [media(5), media(6)]
+        self.q._got("queue_updated", {"state": "playing", "current_index": 1,
+                                      "current_item": {"queue_item_id": "z",
+                                                       "media_item": media(6)}})
+        self.assertEqual([t["id"] for t in self.q.tracks], [mine(5)["id"], mine(6)["id"]])
+        self.assertEqual(self.q.current["id"], mine(6)["id"])
 
     def test_a_radio_grows_as_the_server_adds(self):
         self.q.play_radio("r", [mine(1)], 0)
@@ -111,10 +135,46 @@ class Case(unittest.TestCase):
         self.assertEqual([[t["id"] for t in g] for g in self.events.grown],
                          [[mine(2)["id"], mine(3)["id"]]])
 
+    def test_the_old_state_after_a_command_is_not_news(self):
+        self.q.play_list([mine(1)], 0)
+        self.q._got("queue_updated", {"state": "idle", "current_index": None})
+        self.assertEqual(self.q.state, "playing")
+        self.assertTrue(self.events.on)
+
+    def test_a_pause_told_as_idle_is_a_pause_and_play_goes_on(self):
+        self.q.play_list([mine(1)], 0)
+        self.q.toggle()
+        self.assertEqual(self.q.state, "paused")
+        self.q._got("queue_updated", {"state": "idle", "current_index": 0,
+                                      "current_item": {"queue_item_id": "a",
+                                                       "media_item": media(1)}})
+        self.assertEqual(self.q.state, "paused")
+        self.q.toggle()
+        self.assertEqual(self.asked()[-1][0], "player_queues/play")
+        self.assertEqual(self.q.state, "playing")
+
+    def test_nothing_comes_back_after_a_stop(self):
+        self.q.play_list([mine(1)], 0)
+        self.q.stop()
+        self.q._got("queue_updated", {"state": "playing", "current_index": 0,
+                                      "current_item": {"queue_item_id": "a",
+                                                       "media_item": media(1)}})
+        self.assertIsNone(self.q.current)
+        self.assertEqual(self.q.state, "stopped")
+        self.q._got("queue_updated", {"state": "idle", "current_index": 0,
+                                      "current_item": {"queue_item_id": "a",
+                                                       "media_item": media(1)}})
+        self.assertIsNone(self.q.current)
+        self.q._asked = 0  # later, it is played from the server's own page
+        self.q._got("queue_updated", {"state": "playing", "current_index": 0,
+                                      "current_item": {"queue_item_id": "b",
+                                                       "media_item": media(1)}})
+        self.assertEqual(self.q.state, "playing")
+
     def test_time_comes_from_the_server(self):
         self.q.play_list([mine(1)], 0)
         self.q._got("queue_time_updated", 12)
-        self.assertEqual(self.events.times, [12.0])
+        self.assertAlmostEqual(self.events.times[-1], 12, places=1)
 
     def test_quiet_while_another_plays(self):
         self.q.active = False

@@ -12,6 +12,8 @@ image(item, base)       a cover URL for an item, or ""
 track(item, base)       a track dict
 item(item, base)        an item dict, a track, or None to leave it out
 uri(text)               (provider, media type, item id) of an MA URI
+uris(item)              every URI of an item: its own and its services' (a
+                        library track is the same as its Яндекс one)
 """
 from urllib.parse import quote
 
@@ -64,6 +66,8 @@ def item(found, base):
         return track(found, base)
     entry = {"title": found.get("name") or "", "cover": image(found, base), "subtitle": ""}
     if kind == "folder":
+        if found.get("name") == "..":
+            return None  # the way up: the program has ← for it
         entry.update(kind="folder", id=found.get("path") or found.get("uri") or "")
         entry["subtitle"] = found.get("subtitle") or ""
     elif kind == "playlist":
@@ -87,6 +91,15 @@ def item(found, base):
 def items(found, base):
     out = [item(i, base) for i in found or []]
     return [i for i in out if i is not None]
+
+
+def uris(found):
+    out = {found.get("uri")}
+    kind = found.get("media_type") or "track"
+    for m in found.get("provider_mappings") or []:
+        out.add("%s://%s/%s" % (m.get("provider_instance"), kind, m.get("item_id")))
+    out.discard(None)
+    return out
 
 
 def uri(text):

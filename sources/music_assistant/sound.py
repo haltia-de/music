@@ -7,26 +7,29 @@ The server sees an app player of its own (product "Mobile Application":
 the server's test for one that plays by itself, not as a part of another),
 private to the account, whose id is the Sendspin peer id made from the key
 kept with the account; guest access lets it play without pairing by a PIN.
-It asks for FLAC (half PCM's bytes, decoded by libmpv), else PCM 48 kHz,
-and holds about a second (BUFFER), so a next, a pause or a stop is heard at
-once: the server ends the stream, and a new one begins with the next sound.
+It asks for PCM 48 kHz (FLAC would carry a header of its own for every
+track, which one pipe cannot), and holds about a second (BUFFER).
 
-The streams go to the player as a pipe (fdclose://), the PCM wrapped in a
-WAV header so libmpv knows it. A stream that follows one that ended within
-JOIN seconds, in the same format (the next track), goes on in the same pipe,
-so nothing of the end of a track is lost; a clear (a skip, a seek) drops
-what the pipe held, and a stream that ended alone (a pause, a stop) ends
-the pipe, so the player stops and the machine may sleep.
+The streams go to the player as a pipe (fdclose://) of raw PCM, with the
+options that say so to libmpv (raw()), through play(what, **options). A stream that follows one that ended within
+JOIN seconds (the next track) goes on in the same pipe, so nothing of the
+end of a track is lost. After flush() (the program asked for another track,
+a seek, a pause or a play) or a clear from the server, the next sound
+starts a new pipe at once, dropping what the old one held. A stream that
+ended alone (a pause, a stop) ends the pipe, so the player stops and the
+machine may sleep.
 
 Sound(url, token, key, name, player, state=None, allowed=None)
   url, token    the server and the account's token
   key           the device's 32-byte X25519 private key
   name          what the server calls the device
-  player()      the program's player (play(what), stop()), made once,
-                called on the GTK side
+  player()      the program's player (play(what, **mpv options), stop()),
+                made once, called on the GTK side
   state(on)     connected (True) or not (False), from the loop's thread
   allowed()     whether sound may be played now (not while another
                 source plays): what comes otherwise is dropped
+
+flush()         what is heard next starts anew (from any thread)
 
 await start()   connects, and keeps connecting after a drop until close()
 await close()
@@ -34,11 +37,10 @@ player_id       the device's id on the server (its queue's id too)
 """
 import asyncio
 import dataclasses
-import fcntl
 import json
+import logging
 import os
 import queue
-import struct
 import threading
 
 import aiohttp
@@ -46,41 +48,27 @@ from gi.repository import GLib
 
 from .client import RETRY, RETRY_MAX, ws_url
 
+LOG = logging.getLogger("haltia-music.sendspin")
 JOIN = 0.5
 BUFFER = 200_000  # bytes the server may send ahead: ~1 s of PCM
-PIPE = 256 * 1024
-F_SETPIPE_SZ = 1031
 
 
-def wav_header(rate, channels, bits):
-    """A WAV header for a stream of unknown length."""
-    block = channels * bits // 8
-    return (b"RIFF" + struct.pack("<I", 0xFFFFFFFF) + b"WAVE" + b"fmt " +
-            struct.pack("<IHHIIHH", 16, 1, channels, rate, rate * block, block, bits) +
-            b"data" + struct.pack("<I", 0xFFFFFFFF))
-
-
-def flac_header(header):
-    """The start of a FLAC stream from the codec header the server sends
-    (with or without the "fLaC" mark)."""
-    if not header or header.startswith(b"fLaC"):
-        return header or b""
-    return b"fLaC" + bytes([0x80, 0, 0, len(header)]) + header
+def raw(pcm):
+    """libmpv's options for a pipe of raw PCM: read at once, nothing probed
+    (a probe of a stream that comes as it plays waits seconds)."""
+    return {"demuxer": "rawaudio", "demuxer_rawaudio_format": "s%dle" % pcm.bit_depth,
+            "demuxer_rawaudio_rate": str(pcm.sample_rate),
+            "demuxer_rawaudio_channels": str(pcm.channels)}
 
 
 class Pipe:
     """One stream to the player: written from the loop, read by libmpv."""
 
-    def __init__(self, player, head):
+    def __init__(self, player, options):
         read, self.fd = os.pipe()
-        try:
-            fcntl.fcntl(self.fd, F_SETPIPE_SZ, PIPE)
-        except OSError:
-            pass
         self.chunks = queue.Queue()
-        self.chunks.put(head)
         threading.Thread(target=self._write, daemon=True).start()
-        GLib.idle_add(lambda: (player().play("fdclose://%d" % read), False)[1])
+        GLib.idle_add(lambda: (player().play("fdclose://%d" % read, **options), False)[1])
 
     def _write(self):
         try:
@@ -116,7 +104,8 @@ class Sound:
         self.player_id = self.identity.peer_id
         self.client = None
         self.pipe = None
-        self.format = None  # the pipe's
+        self.format = None  # the pipe's: (codec, PCM format)
+        self.flushing = False  # the next sound starts a new pipe
         self._ending = None  # the timer that ends a pipe whose stream ended
         self._task = None
         self._closing = False
@@ -134,7 +123,7 @@ class Sound:
                                                              unpaired_access_enabled=True))
         formats = [SupportedAudioFormat(codec=codec, channels=2, sample_rate=48000,
                                         bit_depth=16)
-                   for codec in (AudioCodec.FLAC, AudioCodec.PCM)]
+                   for codec in (AudioCodec.PCM,)]
         c = SendspinClient(
             self.identity, self.name, [Roles.PLAYER], pairing_store=store,
             device_info=DeviceInfo(product_name="Mobile Application", manufacturer="Haltia",
@@ -143,8 +132,9 @@ class Sound:
                                                     buffer_capacity=BUFFER,
                                                     supported_commands=[]))
         c.add_audio_chunk_listener(self._chunk)
+        c.add_stream_start_listener(lambda _m: LOG.debug("stream start"))
         c.add_stream_end_listener(lambda _roles: self._ended())
-        c.add_stream_clear_listener(lambda _roles: self._end())
+        c.add_stream_clear_listener(lambda _roles: self._cleared())
         return c
 
     async def start(self):
@@ -210,19 +200,26 @@ class Sound:
         if self._ending is not None:
             self._ending.cancel()
             self._ending = None
-        if self.pipe is not None and fmt != self.format:
+        kind = (fmt.codec, fmt.pcm_format)
+        if self.pipe is not None and (self.flushing or kind != self.format):
             self._end()
         if self.pipe is None:
-            self.format = fmt
-            from aiosendspin.models.types import AudioCodec
-            pcm = fmt.pcm_format
-            head = (flac_header(fmt.codec_header) if fmt.codec is AudioCodec.FLAC else
-                    wav_header(pcm.sample_rate, pcm.channels, pcm.bit_depth))
-            self.pipe = Pipe(self.player, head)
+            LOG.debug("new pipe (%s)", "flushed" if self.flushing else "first")
+            self.format, self.flushing = kind, False
+            self.pipe = Pipe(self.player, raw(fmt.pcm_format))
         self.pipe.write(data)
+
+    def flush(self):
+        """What is heard next starts anew: the program asked for it."""
+        self.flushing = True
+
+    def _cleared(self):
+        LOG.debug("stream clear")
+        self.flushing = True
 
     def _ended(self):
         """The stream ended: the next track's may follow at once."""
+        LOG.debug("stream end")
         if self.pipe is not None and self._ending is None:
             self._ending = asyncio.get_running_loop().call_later(JOIN, self._end)
 

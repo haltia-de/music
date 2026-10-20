@@ -47,7 +47,7 @@ class Connection(Case):
         c = await self.connect()
         self.assertTrue(c.connected)
         self.assertEqual(c.user, "Кот")
-        self.assertEqual(self.server.asked[0], ("auth", {"token": fake_ma.TOKEN, "locale": "ru"}))
+        self.assertEqual(self.server.asked[0], ("auth", {"token": fake_ma.TOKEN, "locale": "ru_RU"}))
         self.assertEqual(self.states, [True])
 
     async def test_a_token_refused(self):

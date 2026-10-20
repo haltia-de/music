@@ -79,6 +79,20 @@ CACHE = os.path.join(GLib.get_user_cache_dir(), "haltia-music")
 PIXBUFS = 400  # decoded covers kept in memory
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
 CARD = 160  # the cover of a card on the home page
+class Player(sound.Player):
+    """The kit's player, with mpv options for one file: Music Assistant's
+    sound comes as raw PCM, which libmpv must be told."""
+
+    def play(self, what, start=None, **options):
+        if not options:
+            return super().play(what, start)
+        player = self._player()
+        player.loadfile(what, **options)
+        player.pause = False
+        self.playing, self.paused = True, False
+        self._awake()
+
+
 # The hearts of a track whose source is gone: none.
 NO_LIKES = SimpleNamespace(able=False, liked=lambda _t: False, toggle=lambda _t: None)
 QR = 360
@@ -293,7 +307,7 @@ class Music(Gtk.Application):
                                  playing=self.on_playing, time=self.on_time, failed=self.say)
         # The player keeps the machine awake while it plays, not paused.
         self.session = playback.Front(
-            self.sources, lambda: sound.Player("Музыка", on_end=lambda: self.session.ended(),
+            self.sources, lambda: Player("Музыка", on_end=lambda: self.session.ended(),
                                            on_time=lambda s: self.session.timed(s),
                                            on_pause=lambda on: self.session.paused(on),
                                            on_error=self.session.ended),

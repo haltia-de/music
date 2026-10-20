@@ -44,6 +44,9 @@ ACCOUNT = os.path.join(GLib.get_user_data_dir(), "haltia-music", "music_assistan
 VAULT = vault.Vault("music_assistant", ACCOUNT,
                     vault.keyring("io.github.haltia_de.Music", "Музыка"))
 LIKES = "favorites"
+# A favourite the library lacks is added to it first, which may take the
+# server more than a minute (it looks the track up).
+LIKE_TIMEOUT = 300
 LIST_MAX = 500
 SEARCH_MAX = 20
 FIND_SECONDS = 2  # how long the network is listened to for servers
@@ -232,10 +235,10 @@ class MusicAssistant:
             await self._client.close()
             self._client = None
 
-    def call(self, command, **args):
+    def call(self, command, timeout=client.TIMEOUT if client else 60, **args):
         async def go():
-            return await (await self.api()).call(command, **args)
-        return loop.run(go())
+            return await (await self.api()).call(command, timeout=timeout, **args)
+        return loop.run(go(), timeout + 10)
 
     def base(self):
         return self.url
@@ -315,7 +318,7 @@ class MusicAssistant:
     def like(self, track, on):
         uri = track["id"]
         if on:
-            self.call("music/favorites/add_item", item=uri)
+            self.call("music/favorites/add_item", item=uri, timeout=LIKE_TIMEOUT)
             return
         library_id = self._library.get(uri)
         if library_id is None:

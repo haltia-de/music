@@ -18,6 +18,8 @@ Queue(source, events, work, player)
 active          set by the session that holds this one (playback.Front):
                 while off, no sound is played and no events are told
 """
+import asyncio
+import logging
 import time
 
 from gi.repository import GLib
@@ -26,7 +28,15 @@ from .. import loop
 from . import items
 from .sound import Sound
 
+LOG = logging.getLogger("haltia-music.queue")
 STATES = {"playing": "playing", "paused": "paused"}
+SETTLE = 6  # seconds the server may still tell the old state after a command
+# Commands after which what is heard starts anew, not after the old buffer.
+FRESH = {"player_queues/play_media", "player_queues/play_index", "player_queues/next",
+         "player_queues/previous", "player_queues/seek", "player_queues/play",
+         "player_queues/pause"}
+TICK = 1  # seconds between the times told while it plays
+KNOWN = 15  # seconds a new player may take to appear on the server
 
 
 class Queue:
@@ -43,6 +53,12 @@ class Queue:
         self._elapsed = (0.0, 0.0)  # (seconds into the track, when that was so)
         self._item = None  # the server's id of the queue item playing
         self._listening = False
+        self._ticking = None  # the GLib source that tells the time
+        self._is_known = False  # the server has the player
+        # What was asked last ("playing", "paused", "stopped") and when: the
+        # server's events say the old state for a moment after a command,
+        # and a pause of this player it tells as idle.
+        self._want, self._asked = None, 0.0
 
     @property
     def current(self):
@@ -74,6 +90,7 @@ class Queue:
     def _begin(self, radio, tracks, i, media, start):
         self.radio, self.radio_src = radio, (self.src if radio else None)
         self.tracks, self.index = list(tracks), i
+        self._ask("playing")
         self._set_state("playing")
         self.events.changed(self.current)
         args = {"media": media, "option": "replace"}
@@ -83,17 +100,31 @@ class Queue:
 
     def jump(self, i):
         if 0 <= i < len(self.tracks):
+            self._ask("playing")
             self._command("player_queues/play_index", index=i)
 
     def next(self):
+        self._ask("playing")
         self._command("player_queues/next")
 
     def prev(self):
+        self._ask("playing")
         self._command("player_queues/previous")
 
     def toggle(self):
-        if self.state != "stopped":
-            self._command("player_queues/play_pause")
+        if self.current is None:
+            return
+        if self.state == "playing":
+            self._ask("paused")
+            self._set_state("paused")
+            self._command("player_queues/pause")
+        else:
+            self._ask("playing")
+            self._set_state("playing")
+            self._command("player_queues/play")
+
+    def _ask(self, state):
+        self._want, self._asked = state, time.monotonic()
 
     def seek(self, sec):
         if self.current is not None:
@@ -105,6 +136,7 @@ class Queue:
             self._command("player_queues/stop")
         self.tracks, self.index, self.radio, self.radio_src = [], -1, None, None
         self._item = None
+        self._ask("stopped")
         self._set_state("stopped")
         self.events.changed(None)
 
@@ -120,8 +152,12 @@ class Queue:
 
     # --- the server ---------------------------------------------------------------
     def _command(self, command, **args):
+        LOG.debug("%s %s", command, args)
+
         def send(_a):
             loop.run(self._ready())
+            if command in FRESH:
+                self.sound.flush()
             return self.src.call(command, queue_id=self.queue_id, **args)
 
         self.work(send, None, self._done)
@@ -140,8 +176,30 @@ class Queue:
             saved = self.src._saved() or {}
             self.sound = Sound(saved["url"], saved["token"], self.src.key(),
                                self.src.device_name(), self._player,
-                               allowed=lambda: self.active)
+                               state=self._sound_state, allowed=lambda: self.active)
             await self.sound.start()
+        await self._known()
+
+    async def _known(self):
+        """The server takes commands for the player only once it has made it
+        (a new device takes seconds): waits for it, up to KNOWN seconds."""
+        if self._is_known:
+            return
+        api = await self.src.api()
+        for _ in range(int(KNOWN / 0.25)):
+            try:
+                found = await api.call("players/get", player_id=self.queue_id)
+            except Exception:
+                found = None
+            if found and found.get("available"):
+                self._is_known = True
+                return
+            await asyncio.sleep(0.25)
+        raise RuntimeError("the server has not taken this device as a player")
+
+    def _sound_state(self, on):
+        if not on:
+            self._is_known = False  # back as a player only when the server says so
 
     def _player(self):
         return self.make_player()
@@ -160,7 +218,7 @@ class Queue:
             return
         if name == "queue_time_updated":
             self._elapsed = (float(data or 0), time.monotonic())
-            self.events.time(self._elapsed[0])
+            self.events.time(self.position)
         elif name == "queue_updated":
             self._queue(data or {})
         elif name == "queue_items_updated":
@@ -168,45 +226,80 @@ class Queue:
                                                limit=500), None, self._items)
 
     def _queue(self, q):
-        state = STATES.get(q.get("state"), "stopped")
-        if q.get("elapsed_time") is not None:
-            self._elapsed = (float(q["elapsed_time"]), time.monotonic())
+        told = q.get("state")
+        state = STATES.get(told, "stopped")
         item = q.get("current_item") or {}
         index = q.get("current_index")
+        LOG.debug("queue %s index %s item %s (asked %s)", told, index, item.get("name"),
+                  self._want)
+        settling = time.monotonic() - self._asked < SETTLE
+        if self._want == "stopped":
+            if told == "playing" and not settling:
+                self._want = None  # played from elsewhere since: it is news again
+            else:
+                return  # stopped here: what the server says about it is not news
+        if self._want == "paused":
+            if told == "playing" and settling:
+                return  # the old state, before the command took
+            if told in ("idle", "paused"):
+                state = "paused"  # a Sendspin player's pause is told as idle
+        elif self._want == "playing" and told != "playing" and settling:
+            return  # the old state, before the command took
+        if q.get("elapsed_time") is not None:
+            self._elapsed = (float(q["elapsed_time"]), time.monotonic())
         if item.get("queue_item_id") != self._item and index is not None:
             self._item = item.get("queue_item_id")
             media = item.get("media_item")
-            track = items.track(media, self.src.url) if media else None
-            if track is not None:
-                if 0 <= index < len(self.tracks) and self.tracks[index]["id"] == track["id"]:
-                    track = self.tracks[index]
-                elif index == len(self.tracks):
-                    self.tracks.append(track)
-                    self.events.grew([track])
-                else:
-                    self.tracks = [track] if index == 0 else self.tracks
-                    index = self.tracks.index(track) if track in self.tracks else 0
-                self.index = index
-                self.events.changed(self.current)
+            if media:
+                self._now(index, media)
         if state != self.state:
             self._set_state(state)
+
+    def _now(self, index, media):
+        """The server plays the index-th item, media: which of ours it is
+        (the server may name it by its library's URI, the list by the
+        service's), else the queue was changed elsewhere and is read again."""
+        names = items.uris(media)
+        if 0 <= index < len(self.tracks) and self.tracks[index]["id"] in names:
+            found = index
+        else:
+            found = next((i for i, t in enumerate(self.tracks) if t["id"] in names), None)
+        if found is None:
+            track = items.track(media, self.src.url)
+            if index == len(self.tracks) and self.radio:
+                self.tracks.append(track)
+                self.events.grew([track])
+                found = index
+            else:
+                self.tracks, self.index = [track], 0
+                self.events.changed(track)
+                self.work(lambda _a: self.src.call("player_queues/items",
+                                                   queue_id=self.queue_id, limit=500),
+                          None, self._items)
+                return
+        if found != self.index:
+            self.index = found
+            self.events.changed(self.current)
 
     def _items(self, found, error):
         if error or not found or not self.active:
             return
-        tracks = [items.track(i["media_item"], self.src.url) for i in found
+        tracks = [i["media_item"] for i in found
                   if (i.get("media_item") or {}).get("media_type") == "track"]
-        known = [t["id"] for t in self.tracks]
-        if [t["id"] for t in tracks[:len(known)]] == known:
-            new = tracks[len(known):]
+        ours = [t["id"] for t in self.tracks]
+        same = len(tracks) >= len(ours) and all(
+            ours[i] in items.uris(m) for i, m in enumerate(tracks[:len(ours)]))
+        if same:
+            new = [items.track(m, self.src.url) for m in tracks[len(ours):]]
             if new:
                 self.tracks.extend(new)
                 self.events.grew(new)
-        else:
-            current = self.current
-            self.tracks = tracks
-            ids = [t["id"] for t in tracks]
-            self.index = ids.index(current["id"]) if current and current["id"] in ids else -1
+            return
+        current = self.current
+        self.tracks = [items.track(m, self.src.url) for m in tracks]
+        names = [items.uris(m) for m in tracks]
+        self.index = next((i for i, n in enumerate(names) if current and current["id"] in n),
+                          self.index if self.index < len(self.tracks) else -1)
 
     def _set_state(self, state):
         self.state = state
@@ -214,3 +307,19 @@ class Queue:
         if on != self.playing or state == "stopped":
             self.playing = on
             self.events.playing(on)
+        if on and self._ticking is None:
+            self._ticking = GLib.timeout_add_seconds(TICK, self._tick)
+        elif not on and self._ticking is not None:
+            GLib.source_remove(self._ticking)
+            self._ticking = None
+        if not on:
+            self.events.time(self.position)
+
+    def _tick(self):
+        """The time bar moves while it plays; the server tells it seldom."""
+        if self.state != "playing":
+            self._ticking = None
+            return False
+        if self.active and self.current is not None:
+            self.events.time(self.position)
+        return True

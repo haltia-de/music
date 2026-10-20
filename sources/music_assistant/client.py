@@ -2,7 +2,7 @@
 """A Music Assistant server's API: JSON over its websocket (/ws), signed in
 with a token. Everything here runs on the sources' loop (sources/loop.py).
 
-Client(url, token, event=None, state=None, locale="ru")
+Client(url, token, event=None, state=None, locale="ru_RU")
   url       the server's address, http(s)://host[:port]
   token     an access token of an account on it
   event(name, object_id, data)
@@ -14,7 +14,7 @@ await start()       connects, and keeps connecting after a drop (RETRY,
                     once the first try is over, raising what kept it from
                     signing in (Refused for a token the server does not
                     take: then it does not try again)
-await call(command, **args)
+await call(command, timeout=TIMEOUT, **args)
                     the result (partial results joined); raises Error with
                     the server's code and words, or ConnectionError when
                     there is no connection
@@ -22,7 +22,7 @@ await close()
 connected           whether it is up and signed in
 user                the account's name, once signed in
 
-await sign_in(url, username, password, name, locale="ru") makes a token
+await sign_in(url, username, password, name, locale="ru_RU") makes a token
 that lasts (a year) for an account: logs in, then asks for one named name.
 Raises Refused for a wrong name or password, ConnectionError when the
 server cannot be reached.
@@ -57,7 +57,7 @@ def ws_url(url, path="/ws"):
 
 
 class Client:
-    def __init__(self, url, token, event=None, state=None, locale="ru"):
+    def __init__(self, url, token, event=None, state=None, locale="ru_RU"):
         self.url, self.token, self.locale = url, token, locale
         self.event, self.state = event, state
         self.connected = False
@@ -158,7 +158,7 @@ class Client:
         if self.state:
             self.state(on)
 
-    async def call(self, command, **args):
+    async def call(self, command, timeout=TIMEOUT, **args):
         if not self.connected:
             raise ConnectionError("no connection to the server")
         mid = str(next(self._ids))
@@ -166,7 +166,7 @@ class Client:
         self._waiting[mid] = [fut, []]
         try:
             await self._ws.send_json({"message_id": mid, "command": command, "args": args})
-            return await asyncio.wait_for(fut, TIMEOUT)
+            return await asyncio.wait_for(fut, timeout)
         finally:
             self._waiting.pop(mid, None)
 
@@ -186,7 +186,7 @@ class Client:
         self.connected = False
 
 
-async def sign_in(url, username, password, name, locale="ru"):
+async def sign_in(url, username, password, name, locale="ru_RU"):
     async with aiohttp.ClientSession() as session:
         try:
             ws = await session.ws_connect(ws_url(url), heartbeat=30)
