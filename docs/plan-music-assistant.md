@@ -102,7 +102,12 @@ Catalog
 ## Spike results (2026-10-20, this PC, MA schema 96)
 
 A script outside the repository played the user's MA as a Sendspin player: to PipeWire on the host,
-and through libmpv inside the Flatpak (Python 3.14). The tablet is still to try.
+through libmpv inside the Flatpak (Python 3.14), and on the tablet through libmpv (PCM) after
+`apk add py3-orjson py3-zeroconf` (aiosendspin imports both at once; the APKBUILD will need them).
+On the tablet it worked as on the PC (sound 0.25 s after `play_media` answered, next within a
+second, pause and stop at once) but cost about 0.8 of one of its four cores: PCM through Noise
+decryption in Python. FLAC (half the bytes) or Opus is to try before 3.0.
+A standalone app player leaves the server's list when it disconnects.
 
 - Connecting: `wss://<host>/ws` (server info, then `auth` with the token) and `wss://<host>/sendspin`,
   whose first message is `{"type": "auth", "token", "client_id": <Sendspin peer id>}`, answered
