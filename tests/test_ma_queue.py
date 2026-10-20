@@ -118,6 +118,15 @@ class Case(unittest.TestCase):
         self.assertIs(self.q.current, tracks[1])
         self.assertEqual(self.q.tracks, tracks)
 
+    def test_what_a_short_mention_lacks_comes_from_the_queue(self):
+        bare = dict(mine(1), artist="", duration=None)
+        self.q.play_list([bare], 0)
+        self.q._got("queue_updated", {"state": "playing", "current_index": 0,
+                                      "current_item": {"queue_item_id": "a",
+                                                       "media_item": media(1)}})
+        self.assertEqual((self.q.current["duration"], self.q.current["artist"]), (100, "Кто-то"))
+        self.assertEqual(self.events.tracks[-1]["duration"], 100)
+
     def test_a_queue_changed_elsewhere_is_read_again(self):
         self.q.play_list([mine(1)], 0)
         self.src.items = [media(5), media(6)]
@@ -170,6 +179,15 @@ class Case(unittest.TestCase):
                                       "current_item": {"queue_item_id": "b",
                                                        "media_item": media(1)}})
         self.assertEqual(self.q.state, "playing")
+
+    def test_a_new_track_starts_at_nought(self):
+        self.q.play_list([mine(1), mine(2)], 0)
+        self.assertLess(self.q.position, 1)
+        self.q._elapsed = (200.0, self.q._elapsed[1])
+        self.q._got("queue_updated", {"state": "playing", "current_index": 1,
+                                      "current_item": {"queue_item_id": "b",
+                                                       "media_item": media(2)}})
+        self.assertLess(self.q.position, 1)
 
     def test_time_comes_from_the_server(self):
         self.q.play_list([mine(1)], 0)

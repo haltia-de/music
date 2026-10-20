@@ -77,6 +77,7 @@ import sources  # noqa: E402
 
 CACHE = os.path.join(GLib.get_user_cache_dir(), "haltia-music")
 PIXBUFS = 400  # decoded covers kept in memory
+COVER_MAX = 4 * 1024 * 1024  # bytes of a cover read, at most
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
 CARD = 160  # the cover of a card on the home page
 class Player(sound.Player):
@@ -264,7 +265,7 @@ class Covers:
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": UA})
                 with urllib.request.urlopen(req, timeout=20) as resp:
-                    data = resp.read(512 * 1024)
+                    data = resp.read(COVER_MAX)
                 with open(path + ".new", "wb") as fh:
                     fh.write(data)
                 os.replace(path + ".new", path)
@@ -961,7 +962,8 @@ class Music(Gtk.Application):
                 text.pack_start(sub, False, False, 0)
             box.pack_start(text, True, True, 0)
             if kind(t) == "track":
-                dur = styled(Gtk.Label(label=mmss(t.get("duration"))), "sub")
+                dur = styled(Gtk.Label(label=mmss(t["duration"]) if t.get("duration")
+                                       else ""), "sub")
                 box.pack_start(dur, False, False, 0)
                 if self.likes_of(t).able:
                     heart = styled(Gtk.Button(), "heart")

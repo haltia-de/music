@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 SOURCE_ID = "music_assistant"
 SIZE = 256  # pixels the server's image proxy makes a cover
+YANDEX_SIZE = 400  # pixels of a cover from Яндекс's own server
 
 
 def image(item, base):
@@ -32,6 +33,9 @@ def image(item, base):
     if not found:
         return ""
     if found.get("remotely_accessible") and found.get("path", "").startswith("http"):
+        # Яндекс's covers come at 1000x1000; the service makes any size.
+        if "avatars.yandex.net/" in found["path"]:
+            return found["path"].replace("/1000x1000", "/%dx%d" % (YANDEX_SIZE, YANDEX_SIZE))
         return found["path"]
     if found.get("proxy_id"):
         return "%s/imageproxy/%s?size=%d" % (base.rstrip("/"), quote(found["proxy_id"]), SIZE)

@@ -50,7 +50,7 @@ class Queue:
         self.state = "stopped"
         self.playing = False
         self.active = False
-        self._elapsed = (0.0, 0.0)  # (seconds into the track, when that was so)
+        self._elapsed = (0.0, time.monotonic())  # (seconds into the track, when so)
         self._item = None  # the server's id of the queue item playing
         self._listening = False
         self._ticking = None  # the GLib source that tells the time
@@ -90,6 +90,7 @@ class Queue:
     def _begin(self, radio, tracks, i, media, start):
         self.radio, self.radio_src = radio, (self.src if radio else None)
         self.tracks, self.index = list(tracks), i
+        self._elapsed = (0.0, time.monotonic())
         self._ask("playing")
         self._set_state("playing")
         self.events.changed(self.current)
@@ -245,13 +246,15 @@ class Queue:
                 state = "paused"  # a Sendspin player's pause is told as idle
         elif self._want == "playing" and told != "playing" and settling:
             return  # the old state, before the command took
-        if q.get("elapsed_time") is not None:
-            self._elapsed = (float(q["elapsed_time"]), time.monotonic())
-        if item.get("queue_item_id") != self._item and index is not None:
+        moved = item.get("queue_item_id") != self._item and index is not None
+        if moved:
             self._item = item.get("queue_item_id")
             media = item.get("media_item")
             if media:
                 self._now(index, media)
+        # With a new track the server still tells the old one's time.
+        if q.get("elapsed_time") is not None and not moved:
+            self._elapsed = (float(q["elapsed_time"]), time.monotonic())
         if state != self.state:
             self._set_state(state)
 
@@ -277,7 +280,14 @@ class Queue:
                                                    queue_id=self.queue_id, limit=500),
                           None, self._items)
                 return
+        # A list made of the server's short mentions (recently played) lacks
+        # the length, the artist, the cover: the queue's item has them.
+        mine, full = self.tracks[found], items.track(media, self.src.url)
+        filled = {k: v for k, v in full.items() if v and not mine.get(k)}
+        mine.update(filled)
         if found != self.index:
+            self._elapsed = (0.0, time.monotonic())  # until the server tells the time
+        if found != self.index or filled:
             self.index = found
             self.events.changed(self.current)
 

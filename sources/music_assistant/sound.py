@@ -14,8 +14,9 @@ The streams go to the player as a pipe (fdclose://) of raw PCM, with the
 options that say so to libmpv (raw()), through play(what, **options). A stream that follows one that ended within
 JOIN seconds (the next track) goes on in the same pipe, so nothing of the
 end of a track is lost. After flush() (the program asked for another track,
-a seek, a pause or a play) or a clear from the server, the next sound
-starts a new pipe at once, dropping what the old one held. A stream that
+a seek, a pause or a play) the pipe ends at once and what the old stream
+still sends is dropped until the server starts a new one (or FLUSH_WAIT
+passes); after a clear from the server the next sound starts a new pipe. A stream that
 ended alone (a pause, a stop) ends the pipe, so the player stops and the
 machine may sleep.
 
@@ -42,14 +43,17 @@ import logging
 import os
 import queue
 import threading
+import time
 
 import aiohttp
 from gi.repository import GLib
 
+from .. import loop
 from .client import RETRY, RETRY_MAX, ws_url
 
 LOG = logging.getLogger("haltia-music.sendspin")
 JOIN = 0.5
+FLUSH_WAIT = 3  # seconds the old stream's sound is dropped after flush(), at most
 BUFFER = 200_000  # bytes the server may send ahead: ~1 s of PCM
 
 
@@ -106,6 +110,7 @@ class Sound:
         self.pipe = None
         self.format = None  # the pipe's: (codec, PCM format)
         self.flushing = False  # the next sound starts a new pipe
+        self.dropping = 0.0  # until when the old stream's sound is dropped
         self._ending = None  # the timer that ends a pipe whose stream ended
         self._task = None
         self._closing = False
@@ -132,7 +137,7 @@ class Sound:
                                                     buffer_capacity=BUFFER,
                                                     supported_commands=[]))
         c.add_audio_chunk_listener(self._chunk)
-        c.add_stream_start_listener(lambda _m: LOG.debug("stream start"))
+        c.add_stream_start_listener(lambda _m: self._started())
         c.add_stream_end_listener(lambda _roles: self._ended())
         c.add_stream_clear_listener(lambda _roles: self._cleared())
         return c
@@ -200,6 +205,9 @@ class Sound:
         if self._ending is not None:
             self._ending.cancel()
             self._ending = None
+        if self.dropping and time.monotonic() < self.dropping:
+            return  # the old stream's, after the program asked for another
+        self.dropping = 0.0
         kind = (fmt.codec, fmt.pcm_format)
         if self.pipe is not None and (self.flushing or kind != self.format):
             self._end()
@@ -210,8 +218,18 @@ class Sound:
         self.pipe.write(data)
 
     def flush(self):
-        """What is heard next starts anew: the program asked for it."""
+        """What is heard next starts anew: the program asked for it. From
+        any thread."""
+        loop.call(self._flush)
+
+    def _flush(self):
         self.flushing = True
+        self.dropping = time.monotonic() + FLUSH_WAIT
+        self._end()
+
+    def _started(self):
+        LOG.debug("stream start")
+        self.dropping = 0.0
 
     def _cleared(self):
         LOG.debug("stream clear")

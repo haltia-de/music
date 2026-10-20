@@ -67,6 +67,15 @@ class Items(unittest.TestCase):
                          BASE + "/imageproxy/ab12?size=256")
         self.assertEqual(items.image({}, BASE), "")
 
+    def test_a_yandex_cover_is_asked_smaller(self):
+        found = {"image": {"path": "https://avatars.yandex.net/get-music-content/1/a/1000x1000",
+                           "remotely_accessible": True}}
+        self.assertEqual(items.image(found, BASE),
+                         "https://avatars.yandex.net/get-music-content/1/a/400x400")
+
+    def test_the_way_up_is_left_out(self):
+        self.assertIsNone(items.item(dict(FOLDER, name=".."), BASE))
+
     def test_uri(self):
         self.assertEqual(items.uri(YM + "://playlist/1:2"), (YM, "playlist", "1:2"))
 
