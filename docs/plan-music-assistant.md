@@ -99,6 +99,34 @@ Catalog
    the MA card and form, packages (`aiosendspin` and its dependencies in `requirements.txt`, the
    APKBUILD, `debian/control`, the Flatpak's modules); dropping the `b8k` names due at 3.0.
 
+## Spike results (2026-10-20, this PC, MA schema 96)
+
+A script outside the repository played the user's MA as a Sendspin player: to PipeWire on the host,
+and through libmpv inside the Flatpak (Python 3.14). The tablet is still to try.
+
+- Connecting: `wss://<host>/ws` (server info, then `auth` with the token) and `wss://<host>/sendspin`,
+  whose first message is `{"type": "auth", "token", "client_id": <Sendspin peer id>}`, answered
+  `{"type": "auth_ok"}`; the Sendspin handshake follows on the same socket. `aiosendspin`'s
+  `SendspinClient.connect` dials by itself, so the spike opened the socket and used the library's
+  internals (`SendspinConnection`); the program wants a small wrapper or an upstream hook.
+- The device must say it is an app (`DeviceInfo.product_name` one of "Web Browser", "Web Player",
+  "Mobile Application", "PWA": a heuristic MA marks as a TODO) to become a standalone player of
+  its own, private to the user, its id the Sendspin peer id. Otherwise MA wraps it as a Sendspin
+  output of a new "universal player" (`up…`) and it plays nothing it is asked.
+- Guest access (`unpaired_access_enabled` in the client's pairing config) is approved by itself
+  for playback: no PIN. The identity (an X25519 key) must be kept, or every start makes a new
+  player on the server; keep it with the account (`Vault`).
+- `buffer_capacity` must be small (200 kB ≈ 1 s of PCM): with 2 MB the server ran ~10 s ahead and
+  next, pause and stop came 10 s late.
+- Timings: `play_media` to sound 0.7 s; `next` 0.4 s; pause and play at once (the stream ends
+  and starts again); a new stream per track, no gap over 0.5 s at track changes.
+- CPU: 2 % (PCM to PipeWire on the host), 12 % in the Flatpak with libmpv playing one endless
+  `python://` stream as `rawaudio` s16le 48 kHz. On a new stream mpv's own buffer must be dropped
+  (a fresh load), or what it holds plays after a next or a pause.
+- `players/get` says idle while it plays; the queue (`queue_updated`) is what is true.
+- Python wheels: `aiosendspin` 9.1.1 needs cryptography, cffi, orjson, zeroconf, mashumaro,
+  cpace, noiseprotocol (the last three pure Python).
+
 ## References
 
 - MA server `/mnt/data/Projects/mass/ma-server`: `controllers/player_queues/README.md` (the queue
