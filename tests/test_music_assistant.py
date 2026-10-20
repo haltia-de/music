@@ -13,8 +13,9 @@ try:
 except ImportError:
     aiohttp = None
 
+import sources.music_assistant as ma  # noqa: E402
+
 if aiohttp:
-    import sources.music_assistant as ma  # noqa: E402
     from sources import loop  # noqa: E402
     from sources.music_assistant import client  # noqa: E402
     from tests import fake_ma  # noqa: E402
@@ -70,7 +71,7 @@ class Items(unittest.TestCase):
         self.assertEqual(items.uri(YM + "://playlist/1:2"), (YM, "playlist", "1:2"))
 
 
-@unittest.skipUnless(aiohttp, "no aiohttp")
+@unittest.skipUnless(ma.SOURCE, "no aiohttp or no aiosendspin")
 class Source(unittest.TestCase):
     """The source against a fake server on the sources' own loop."""
 

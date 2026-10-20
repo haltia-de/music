@@ -28,10 +28,17 @@ import vault
 from .. import loop
 from . import items
 
+# Without aiohttp, or without Sendspin's libraries, there is no SOURCE: the
+# source is left out.
 try:
     from . import client
-except ImportError:  # no aiohttp: no Music Assistant (and no SOURCE)
+except ImportError:
     client = None
+try:
+    import aiosendspin.client  # noqa: F401  the sound needs it
+    SENDSPIN = True
+except ImportError:
+    SENDSPIN = False
 
 ACCOUNT = os.path.join(GLib.get_user_data_dir(), "haltia-music", "music_assistant.json")
 VAULT = vault.Vault("music_assistant", ACCOUNT,
@@ -320,4 +327,4 @@ class MusicAssistant:
                   library_item_id=library_id)
 
 
-SOURCE = MusicAssistant() if client else None
+SOURCE = MusicAssistant() if client and SENDSPIN else None
