@@ -1,5 +1,7 @@
 # libmpv for sound only (haltia_kit.sound): no video outputs, no player
-# program, no scripts. ffmpeg comes with the runtime (its AAC through the
+# program. Lua (LuaJIT) is in only for the options its scripts bring, which
+# haltia_kit sets (ytdl=no): without them libmpv refuses to start. ffmpeg
+# comes with the runtime (its AAC through the
 # runtime's codecs-extra extension); mpv also needs libass and libplacebo,
 # built here first. Flathub's shared-modules has no libmpv.
 name: libmpv
@@ -16,6 +18,7 @@ config-opts:
   - -Dgl=disabled
   - -Diconv=enabled
   - -Dzlib=enabled
+  - -Dlua=luajit
   - -Dmanpage-build=disabled
   - -Dhtml-build=disabled
   - -Dpdf-build=disabled
@@ -28,6 +31,21 @@ sources:
     url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
     sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
 modules:
+  - name: luajit
+    buildsystem: simple
+    build-commands:
+      - make -j${FLATPAK_BUILDER_N_JOBS} PREFIX=/app
+      - make install PREFIX=/app
+    cleanup:
+      - /bin
+      - /include
+      - /lib/pkgconfig
+      - /lib/*.a
+      - /share
+    sources:
+      - type: archive
+        url: https://github.com/LuaJIT/LuaJIT/archive/dd3b24369ddfaa83c78cd6fdd91d157c8968ec8d.tar.gz
+        sha256: a6ac8457c474c6fb71aaa7660dd5bf8f6e0506496fc74786b2dae18e26a768cc
   - name: libass
     buildsystem: autotools
     config-opts:
