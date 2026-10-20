@@ -289,11 +289,12 @@ class Music(Gtk.Application):
         self.win = None
         self.mpris = None  # what plays, told to the desktop
         events = SimpleNamespace(changed=self.on_track, grew=self.on_grew,
-                                 playing=self.on_playing, failed=self.say)
+                                 playing=self.on_playing, time=self.on_time, failed=self.say)
         # The player keeps the machine awake while it plays, not paused.
         self.session = playback.Session(
             self.sources, lambda: sound.Player("Музыка", on_end=lambda: self.session.ended(),
-                                           on_time=self.on_time, on_pause=self.session.paused,
+                                           on_time=lambda s: self.session.timed(s),
+                                           on_pause=lambda on: self.session.paused(on),
                                            on_error=self.session.ended),
             self.work, self.later, events)
 
@@ -734,9 +735,9 @@ class Music(Gtk.Application):
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         text.set_valign(Gtk.Align.CENTER)
         text.pack_start(styled(Gtk.Label(label=src.label, xalign=0), "ttl"), False, False, 0)
-        sub = {"in": state.get("name") or "Вход выполнен", "getting": "Получаю код…",
-               "waiting": "Жду подтверждения…"}.get(state["kind"], state.get("note")
-                                                    or "Вход не выполнен")
+        sub = {"in": state.get("name") or "Вход выполнен", "getting": "Подождите…",
+               "waiting": "Жду подтверждения…", "form": "Вход не выполнен"}.get(
+            state["kind"], state.get("note") or "Вход не выполнен")
         text.pack_start(styled(Gtk.Label(label=sub, xalign=0), "sub"), False, False, 0)
         top.pack_start(text, True, True, 0)
         if state["kind"] == "in":
@@ -757,7 +758,50 @@ class Music(Gtk.Application):
         card.pack_start(top, False, False, 0)
         if state["kind"] == "waiting":
             card.pack_start(self.login_code(state), False, False, 0)
+        elif state["kind"] == "form":
+            card.pack_start(self.login_form(src, state), False, False, 0)
         return card
+
+    def login_form(self, src, state):
+        """The fields a source asks for to sign in, and «Войти»."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        if state.get("note"):
+            note = styled(Gtk.Label(label=state["note"], xalign=0), "sub")
+            note.set_line_wrap(True)
+            box.pack_start(note, False, False, 0)
+        entries = {}
+        for field in state["fields"]:
+            box.pack_start(styled(Gtk.Label(label=field["label"], xalign=0), "sub"),
+                           False, False, 0)
+            entry = styled(Gtk.Entry(text=field.get("value") or ""), "search")
+            entry.set_visibility(not field.get("secret"))
+            if field.get("choices"):
+                row = Gtk.Box(spacing=8)
+                for value, label in field["choices"]:
+                    btn = styled(Gtk.Button(label=label), "quiet")
+                    btn.connect("clicked", lambda _b, e=entry, v=value: e.set_text(v))
+                    row.pack_start(btn, False, False, 0)
+                box.pack_start(row, False, False, 0)
+            box.pack_start(entry, False, False, 0)
+            entries[field["id"]] = entry
+        btn = styled(Gtk.Button(label="Войти"), "login")
+        btn.set_halign(Gtk.Align.START)
+
+        def send(*_a):
+            self.win.set_focus(None)
+            self.sources.send(src.id, {fid: e.get_text() if self._secret(state, fid)
+                                       else e.get_text().strip()
+                                       for fid, e in entries.items()})
+
+        for entry in entries.values():
+            entry.connect("activate", send)
+        btn.connect("clicked", send)
+        box.pack_start(btn, False, False, 0)
+        return box
+
+    @staticmethod
+    def _secret(state, fid):
+        return any(f["id"] == fid and f.get("secret") for f in state["fields"])
 
     def switch_source(self, src, on):
         if self.sources.switch(src.id, on):

@@ -28,9 +28,9 @@ class Source:
         return True
 
     def login_start(self):
-        return {"code": "", "url": "", "qr": ""}
+        return {"kind": "code", "code": "", "url": "", "qr": ""}
 
-    def login_wait(self):
+    def login_next(self, values):
         return True
 
     def logout(self):
@@ -159,6 +159,7 @@ class Events:
         self.tracks = []  # every changed(track)
         self.grown = []
         self.on = None  # the last playing(on)
+        self.times = []
         self.failures = []
 
     def changed(self, track):
@@ -169,6 +170,9 @@ class Events:
 
     def playing(self, on):
         self.on = on
+
+    def time(self, seconds):
+        self.times.append(seconds)
 
     def failed(self, text):
         self.failures.append(text)

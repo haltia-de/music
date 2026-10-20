@@ -230,7 +230,7 @@ class Yandex:
             except Exception:
                 pass
             # The QR session lives in the client's cookies: it stays open
-            # until login_wait is done with it.
+            # until login_next is done with it.
             client = PassportClient()
             try:
                 qr = (client, await client.start_qr_login())
@@ -241,7 +241,7 @@ class Yandex:
             return device, qr
 
         self._device, self._qr = self._run(start())
-        out = {"code": "", "url": "", "qr": ""}
+        out = {"kind": "code", "code": "", "url": "", "qr": ""}
         if self._device:
             out["code"], out["url"] = self._device.user_code, self._device.verification_url
         if self._qr:
@@ -253,7 +253,8 @@ class Yandex:
             await self._qr[0].close()
             self._qr = None
 
-    def login_wait(self):
+    def login_next(self, values):
+        """The code shown was confirmed: on the phone or at the page."""
         from ya_passport_auth import PassportClient
 
         device, qr = self._device, self._qr

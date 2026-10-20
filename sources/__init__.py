@@ -8,11 +8,12 @@ SOURCE has:
   logged_in()               True when it has an account to play from; like
                             account(), it reads no network and may be called
                             from the window
-  login_start()             {"code", "url", "qr"}: the code to enter at url,
-                            and a URL to show as a QR code to scan; either
-                            may be "" when the service has no such way in
-  login_wait()              blocks until one of them is confirmed; True on
-                            success
+  login_start()             the first step of signing in (below)
+  login_next(values)        blocks until the step shown is done: values is
+                            None after a code step, {field id: text} after
+                            a form; gives the next step, True when signed
+                            in, False when not confirmed; raises with a
+                            message to show (a wrong password)
   logout()
   account()                 the account's name, or ""
   home()                    [{"id", "title"}]: the rows of the first page; a
@@ -44,6 +45,14 @@ plays on and on, a folder holds more items.
 A track is a dict: kind "track", source, id, title, artist, duration
 (seconds or None), cover, and optionally album (its title).
 
+A step of signing in is a dict with a kind:
+  "code"    code, url, qr: the code to enter at url, and a URL to show as a
+            QR code to scan; either may be "" when there is no such way in
+  "form"    fields: [{"id", "label", "secret" (typed unseen), "value" (what
+            the field holds at first), "choices" ([(value, label)] that
+            fill it at a tap, e.g. servers found)}]; note: what to say
+            above it ("" for nothing)
+
 A source may block (network): haltia-music calls it from a worker thread.
 
 Sources(found, settings, folder, work, later, signed, hearts, failed) holds
@@ -72,10 +81,12 @@ answers(id)         its answers.Answers
 likes(id)           its likes.Likes
 quality(id), set_quality(id, quality)
 signin(id)          {"kind": "in", "name"} | {"kind": "out"} |
-                    {"kind": "getting"} | {"kind": "waiting", "code",
-                    "url", "qr"} | {"kind": "failed", "note"}
-sign_in(id)         asks the source for a code, then waits for it to be
-                    confirmed; signed(id) at every step
+                    {"kind": "getting"} (asking the source) |
+                    {"kind": "waiting", "code", "url", "qr"} (a code step) |
+                    {"kind": "form", "fields", "note"} (a form step) |
+                    {"kind": "failed", "note"}
+sign_in(id)         goes through the source's steps; signed(id) at each
+send(id, values)    what was typed into the form shown
 sign_out(id)        the account and its answers and hearts are forgotten
 """
 import importlib
@@ -86,7 +97,7 @@ import sys
 import answers
 import likes
 
-REQUIRED = ("id", "label", "logged_in", "login_start", "login_wait", "logout", "account",
+REQUIRED = ("id", "label", "logged_in", "login_start", "login_next", "logout", "account",
             "home", "home_row", "browse", "tracks", "radio_next", "search", "stream_url")
 
 
@@ -111,6 +122,8 @@ def load():
 
 
 ORDER = ("yandex", "music_assistant")
+START = {"kind": "start"}  # what failed was the start of signing in
+WAITED = {"kind": "failed"}  # a code was not confirmed
 
 
 class Sources:
@@ -212,24 +225,51 @@ class Sources:
         age, src = self.ages[sid], self.found[sid]
         self._set(sid, age, {"kind": "getting"})
         self.work(lambda _a: src.login_start(), None,
-                  lambda res, err: self._code(sid, age, res, err))
+                  lambda step, err: self._step(sid, age, step, err, START))
 
-    def _code(self, sid, age, res, error):
-        if error or not res or not (res.get("qr") or res.get("code")):
-            self._set(sid, age, {"kind": "failed", "note": "Не удалось начать вход: нет связи?"})
+    def send(self, sid, values):
+        state = self.states[sid]
+        if state["kind"] != "form":
             return
-        if self._set(sid, age, {"kind": "waiting", "code": res.get("code", ""),
-                                "url": res.get("url", ""), "qr": res.get("qr", "")}):
-            src = self.found[sid]
-            self.work(lambda _a: src.login_wait(), None,
-                      lambda ok, err: self._confirmed(sid, age, ok, err))
+        # Shown again on a refusal with what was typed, but not the secrets.
+        again = dict(state, fields=[f if f.get("secret") else dict(f, value=values.get(
+            f["id"], f.get("value", ""))) for f in state["fields"]])
+        age, src = self.ages[sid], self.found[sid]
+        self._set(sid, age, {"kind": "getting"})
+        self.work(lambda _a: src.login_next(values), None,
+                  lambda step, err: self._step(sid, age, step, err, again))
 
-    def _confirmed(self, sid, age, ok, error):
-        if error or not ok:
-            self._set(sid, age, {"kind": "failed", "note": "Вход не подтверждён."})
-        else:
-            self._set(sid, age, self._now(sid))
-            self.hearts[sid].refresh()
+    def _step(self, sid, age, step, error, before):
+        """The source's answer: the next step, or the end of signing in.
+        before is the form to show again with the error, or START."""
+        if error:
+            if before is START:
+                note = "Не удалось начать вход: нет связи?"
+            else:
+                note = str(error) or "Не удалось войти."
+            self._set(sid, age, dict(before, note=note) if before is not START
+                      else {"kind": "failed", "note": note})
+            return
+        if step is True:
+            if self._set(sid, age, self._now(sid)):
+                self.hearts[sid].refresh()
+            return
+        kind = step.get("kind", "code") if isinstance(step, dict) else None
+        if kind == "form":
+            self._set(sid, age, {"kind": "form", "fields": step.get("fields", []),
+                                 "note": step.get("note", "")})
+            return
+        if kind != "code" or not (step.get("qr") or step.get("code")):
+            self._set(sid, age, {"kind": "failed", "note": "Вход не подтверждён."
+                                 if before is not START else
+                                 "Не удалось начать вход: нет связи?"})
+            return
+        if self._set(sid, age, {"kind": "waiting", "code": step.get("code", ""),
+                                "url": step.get("url", ""), "qr": step.get("qr", "")}):
+            src = self.found[sid]
+            self.work(lambda _a: src.login_next(None), None,
+                      lambda nxt, err: self._step(sid, age, nxt, err and RuntimeError(
+                          "Вход не подтверждён."), WAITED))
 
     def sign_out(self, sid):
         self.ages[sid] += 1

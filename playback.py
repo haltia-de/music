@@ -15,9 +15,15 @@ Session(sources, player, work, later, events):
   later(seconds, func)
                 func() once, after a while
   events        changed(track or None), grew(new tracks), playing(on),
-                failed(text)
+                time(seconds), failed(text)
 
-The player tells it ended(error) at the end of a track and paused(on).
+The player tells it ended(error) at the end of a track, paused(on) and
+timed(seconds) as it plays.
+
+What the window and MPRIS use, and all a session of another kind (one whose
+queue a server holds) has to offer: play_list, play_radio, jump, next, prev,
+toggle, seek, stop; current, index, tracks, radio, radio_src, state,
+position; and the events.
 
 state is "playing" from the tap on a track until the queue runs out (also
 while the next track is being fetched or a broken one gives way), "paused"
@@ -52,6 +58,13 @@ class Session:
     @property
     def current(self):
         return self.tracks[self.index] if 0 <= self.index < len(self.tracks) else None
+
+    @property
+    def position(self):
+        """Seconds into the current track."""
+        if self.current is None or self.player is None:
+            return 0
+        return self.player.position or 0
 
     @property
     def state(self):
@@ -121,6 +134,9 @@ class Session:
 
     def paused(self, on):
         self._set_playing(on is False)
+
+    def timed(self, seconds):
+        self.events.time(seconds)
 
     # --- inside -------------------------------------------------------------------
     def _begin(self, radio, tracks, i):

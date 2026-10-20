@@ -18,7 +18,8 @@ class Other(fake.Source):
     def __init__(self):
         super().__init__()
         self.signed = True
-        self.codes = [{"code": "1234", "url": "https://example.org/device", "qr": ""}]
+        self.codes = [{"kind": "code", "code": "1234", "url": "https://example.org/device",
+                       "qr": ""}]
         self.confirm = True
 
     def logged_in(self):
@@ -27,7 +28,7 @@ class Other(fake.Source):
     def login_start(self):
         return self.codes.pop(0)
 
-    def login_wait(self):
+    def login_next(self, values):
         self.signed = self.confirm
         return self.confirm
 
@@ -43,6 +44,31 @@ class Other(fake.Source):
 
 class Yandex(fake.Source):
     id = "yandex"
+
+
+class Server(Other):
+    """A server: its address, then an account on it."""
+    id = "server"
+    FORM = {"kind": "form", "note": "", "fields": [
+        {"id": "url", "label": "Адрес", "secret": False, "value": "",
+         "choices": [("http://found:8095", "Найден")]},
+        {"id": "login", "label": "Логин", "secret": False, "value": ""},
+        {"id": "password", "label": "Пароль", "secret": True, "value": ""}]}
+
+    def __init__(self):
+        super().__init__()
+        self.signed = False
+        self.sent = []
+
+    def login_start(self):
+        return self.FORM
+
+    def login_next(self, values):
+        self.sent.append(values)
+        if values.get("password") != "верный":
+            raise PermissionError("Неверный логин или пароль.")
+        self.signed = True
+        return True
 
 
 class Case(unittest.TestCase):
@@ -151,6 +177,50 @@ class Before(Case):
         self.assertEqual(self.make().quality("yandex"), "high")
         self.settings.set("quality.yandex", "low")
         self.assertEqual(self.make().quality("yandex"), "low")  # moved only once
+
+
+class Form(Case):
+    def setUp(self):
+        super().setUp()
+        self.server = Server()
+
+    def make(self):
+        self.s = sources.Sources({"server": self.server}, self.settings, self.dir.name,
+                                 self.work, self.later, self.signed.append, lambda: None,
+                                 self.failures.append)
+        return self.s
+
+    def test_a_form_then_signed_in(self):
+        s = self.make()
+        s.sign_in("server")
+        state = s.signin("server")
+        self.assertEqual(state["kind"], "form")
+        self.assertEqual([f["id"] for f in state["fields"]], ["url", "login", "password"])
+        s.send("server", {"url": "http://found:8095", "login": "кот", "password": "верный"})
+        self.assertEqual(s.signin("server"), {"kind": "in", "name": "кот"})
+        self.assertEqual(self.server.sent[0]["login"], "кот")
+
+    def test_a_wrong_password_shows_the_form_again_with_why(self):
+        s = self.make()
+        s.sign_in("server")
+        s.send("server", {"url": "x", "login": "кот", "password": "нет"})
+        state = s.signin("server")
+        self.assertEqual(state["kind"], "form")
+        self.assertEqual(state["note"], "Неверный логин или пароль.")
+        values = {f["id"]: f["value"] for f in state["fields"]}
+        self.assertEqual(values, {"url": "x", "login": "кот", "password": ""})
+        s.send("server", {"url": "x", "login": "кот", "password": "верный"})
+        self.assertEqual(s.signin("server")["kind"], "in")
+
+    def test_checking_while_the_source_answers(self):
+        s = self.make()
+        s.sign_in("server")
+        self.work.held = True
+        s.send("server", {"password": "верный"})
+        self.assertEqual(s.signin("server"), {"kind": "getting"})
+        s.send("server", {"password": "верный"})  # no form shown now: ignored
+        self.work.run()
+        self.assertEqual(len(self.server.sent), 1)
 
 
 class SignIn(Case):

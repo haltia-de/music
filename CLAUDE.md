@@ -75,8 +75,9 @@ There is no build or linter. Checks available:
   (Music Assistant is the exception the plan reshapes the app for).
 - `sources.Sources` — the sources found with what each keeps apart: one `Answers` file and one
   `Likes` per source, switched on or off (`off` in the settings), quality (`quality.<id>`), the
-  shown one (`source`, changed by the header button), and each one's sign-in steps (`signin`,
-  `sign_in`, `sign_out`). Every track carries `source`; playing and liking go to the track's
+  shown one (`source`, changed by the header button), and each one's sign-in (`signin`,
+  `sign_in`, `send`, `sign_out`): the source hands out steps, a code/QR to confirm or a form
+  to fill (`login_start`, `login_next`), and the settings card draws the step it is at. Every track carries `source`; playing and liking go to the track's
   own source, so a view keeps the source it shows (`view["src"]`). Яндекс comes first (`ORDER`).
   Before 2.4 there was Яндекс alone: `data.json` and `quality` move to its names once.
 - `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they share one event loop on a
@@ -86,9 +87,9 @@ There is no build or linter. Checks available:
   `~/.local/share/haltia-music/yandex.json`, mode 600. A file is the newest: it moves into the
   keyring when one answers and is deleted only once the keyring holds it.
   Token renewal: music token from x_token, falling back to the refresh token.
-  - Login runs QR and device-code flows at once; `login_wait` takes whichever confirms first. The QR
-    session lives in the `PassportClient`'s cookie jar, so that client stays open from
-    `login_start` to `login_wait`.
+  - Login runs QR and device-code flows at once (one code step); `login_next` takes whichever
+    confirms first. The QR session lives in the `PassportClient`'s cookie jar, so that client stays
+    open from `login_start` to `login_next`.
   - Home rows and the Browse tree mirror the Music Assistant Yandex provider
     (`/mnt/data/Projects/mass/ma-provider-yandex-music/provider/`, `get_recommendations` and
     `browse.py`) — the reference for which API calls feed which row/folder.
@@ -142,8 +143,11 @@ and is passed to `stream_url(track, quality)`; it applies from the next track.
 
 `self.session` (`playback.Session`) owns the queue, the radio, its growth, start/finish/skip
 feedback; `Music` only calls it (`play_list`, `play_radio`, `jump`, the bar's
-buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `say`). The player reports to
-it (`on_end` → `ended()`, `on_error` → `ended(text)`, `on_pause` → `paused`). Change playback rules there, with a test in `tests/test_playback.py`.
+buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `on_time`, `say`). The player
+reports to it (`on_end` → `ended()`, `on_error` → `ended(text)`, `on_pause` → `paused`, `on_time` →
+`timed`). Its docstring lists the interface the window and MPRIS use (`position` included); keep
+them to it, as the Music Assistant kind will offer only that. Change playback rules there, with a
+test in `tests/test_playback.py`.
 
 - The session keeps its own copy of the tracks. The radio page (`self.radio_view`) mirrors it:
   `on_grew` appends rows and `shown` entries, so row positions equal queue positions.

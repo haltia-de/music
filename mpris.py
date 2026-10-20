@@ -83,10 +83,7 @@ class Mpris:
         return self.session.state.capitalize()
 
     def position(self):
-        player = self.session.player
-        if self.session.current is None or player is None:
-            return 0
-        return int((player.position or 0) * 1000000)
+        return int(self.session.position * 1000000)
 
     def metadata(self):
         track = self.session.current

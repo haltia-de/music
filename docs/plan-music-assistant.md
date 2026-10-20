@@ -91,10 +91,11 @@ Catalog
    token): register over Sendspin, play two or three tracks through mpv; measure the delay to
    sound, the gap between tracks, CPU here and on the tablet; try `auth/login` and the device's
    admission. Failing, fall back to the plan of ADR 0003's rejected option and spike that.
-3. **2.5.0, seams**: sign-in steps in the source contract (code/QR or a form); the shared loop
-   thread; `Session`'s interface, the program's own kind behind it; MPRIS position from it;
+3. **2.5.0, seams**: sign-in steps in the source contract (code/QR or a form; done);
+   `Session`'s interface written down, the window and MPRIS using only it (position and time
+   through it; done). Moved to 3.0, where their second user comes: the shared loop thread, and
    `stream_url`, `radio_next` and `qualities` required only of a Source playing through the
-   program's own Session.
+   program's own Session (one adapter would make either a seam on paper only).
 4. **3.0.0, Music Assistant**: the client, the queue mirror, Sendspin sound, finding servers,
    the MA card and form, packages (`aiosendspin` and its dependencies in `requirements.txt`, the
    APKBUILD, `debian/control`, the Flatpak's modules); dropping the `b8k` names due at 3.0.

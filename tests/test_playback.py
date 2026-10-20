@@ -220,6 +220,18 @@ class State(Case):
         self.assertEqual(self.s.state, "stopped")
 
 
+class Time(Case):
+    def test_position_and_time_of_the_track_playing(self):
+        self.assertEqual(self.s.position, 0)
+        self.s.play_list([track(1)], 0)
+        self.player.position = 42
+        self.assertEqual(self.s.position, 42)
+        self.s.timed(43)
+        self.assertEqual(self.events.times, [43])
+        self.s.stop()
+        self.assertEqual(self.s.position, 0)
+
+
 class TwoSources(Case):
     """Every track is played by its own source."""
 
