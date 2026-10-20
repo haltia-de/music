@@ -117,6 +117,17 @@ class Which(Case):
         s.show_next()
         self.assertIs(s.shown, self.yandex)
 
+    def test_an_experimental_one_is_off_until_switched_on(self):
+        self.other.experimental = True
+        s = self.make()
+        self.assertEqual(s.on(), [self.yandex])
+        self.assertTrue(s.switch("other", True))
+        self.assertEqual(s.on(), [self.yandex, self.other])
+        self.assertEqual(self.make().on(), [self.yandex, self.other])
+        self.assertFalse(s.switch("other", True))
+        self.assertTrue(s.switch("other", False))
+        self.assertEqual(s.on(), [self.yandex])
+
     def test_switched_off_keeps_the_sign_in(self):
         s = self.make()
         s.switch("other", False)

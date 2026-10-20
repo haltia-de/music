@@ -755,6 +755,9 @@ class Music(Gtk.Application):
                "waiting": "Жду подтверждения…", "form": "Вход не выполнен"}.get(
             state["kind"], state.get("note") or "Вход не выполнен")
         text.pack_start(styled(Gtk.Label(label=sub, xalign=0), "sub"), False, False, 0)
+        if getattr(src, "experimental", False):
+            text.pack_start(styled(Gtk.Label(label="Экспериментальный: возможны сбои",
+                                             xalign=0), "sub"), False, False, 0)
         top.pack_start(text, True, True, 0)
         if state["kind"] == "in":
             btn = styled(Gtk.Button(label="Выйти"), "quiet")

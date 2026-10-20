@@ -36,6 +36,8 @@ Optional:
   liked(), like(track, on)  the ids of the tracks one likes (a set or a
                             list), and liking a track or no longer
   likes_list                the id of the list of the tracks one likes
+  experimental              True: not yet to be relied on, so off until
+                            switched on, and said so in its card
 
 An item is a dict with a kind: "track", or "list", "radio" or "folder"
 with id, title, subtitle, cover (an image URL or "") and optionally glyph,
@@ -60,8 +62,9 @@ the sources found with what each keeps apart. No GTK; every call comes from
 the window's thread.
   found         {id: SOURCE}, as load() gives
   settings      get(key, default) and set(key, value), as haltia_kit's
-                Settings; keeps off (the ids switched off), source (the one
-                shown) and quality.<id>
+                Settings; keeps off (the ids switched off), on (the
+                experimental ones switched on), source (the one shown) and
+                quality.<id>
   folder        where each source's answers are kept, data-<id>.json
   work, later   as for playback.Session
   signed(id)    the sign-in of a source changed
@@ -164,17 +167,27 @@ class Sources:
     def get(self, sid):
         return self.found.get(sid)
 
-    def _off(self):
-        return [sid for sid in (self.settings.get("off", "") or "").split(",") if sid]
+    def _ids(self, key):
+        return [sid for sid in (self.settings.get(key, "") or "").split(",") if sid]
+
+    def _key(self, sid):
+        """An experimental source is off unless switched on, the rest on unless off."""
+        return "on" if getattr(self.found.get(sid), "experimental", False) else "off"
 
     def is_on(self, sid):
-        return sid in self.found and sid not in self._off()
+        if sid not in self.found:
+            return False
+        key = self._key(sid)
+        return (sid in self._ids(key)) == (key == "on")
 
     def switch(self, sid, on):
-        off = [i for i in self._off() if i != sid] + ([] if on else [sid])
-        if off == self._off():
+        key = self._key(sid)
+        listed = [i for i in self._ids(key) if i != sid]
+        if on == (key == "on"):
+            listed.append(sid)
+        if listed == self._ids(key):
             return False
-        self.settings.set("off", ",".join(off))
+        self.settings.set(key, ",".join(listed))
         return True
 
     @property

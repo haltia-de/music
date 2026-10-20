@@ -103,6 +103,7 @@ def found_servers(seconds=FIND_SECONDS):
 class MusicAssistant:
     id, label = items.SOURCE_ID, "Music Assistant"
     likes_list = LIKES
+    experimental = True
     device_name = staticmethod(_name)
 
     def session(self, events, work, player):

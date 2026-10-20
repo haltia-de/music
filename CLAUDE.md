@@ -79,7 +79,8 @@ There is no build or linter. Checks available:
   to fill (`login_start`, `login_next`), and the settings card draws the step it is at. Every track carries `source`; playing and liking go to the track's
   own source, so a view keeps the source it shows (`view["src"]`). Яндекс comes first (`ORDER`).
   Before 2.4 there was Яндекс alone: `data.json` and `quality` move to its names once.
-- `sources/music_assistant/` — Music Assistant (plan and ADR 0003/0004 in `docs/`), a package:
+- `sources/music_assistant/` — Music Assistant (plan and ADR 0003/0004 in `docs/`), experimental
+  (`experimental = True`: off until switched on, kept in the `on` setting), a package:
   `client.py` (the server's websocket API: token sign-in, commands, events, reconnecting;
   `sign_in` makes a year-long token from a name and password), `items.py` (MA media items as the
   program's items, no network), `__init__.py` (`SOURCE`: the form sign-in, home rows from
