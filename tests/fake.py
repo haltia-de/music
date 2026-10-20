@@ -84,6 +84,36 @@ class Source:
         self.told.append((radio_id, event, track["id"], seconds))
 
 
+class Sources:
+    """The sources as a Session sees them: each by its id, and the quality
+    it plays in."""
+
+    def __init__(self, *found, quality="low"):
+        self.found = {src.id: src for src in found}
+        self.qualities = {}
+        self.default = quality
+
+    def get(self, sid):
+        return self.found.get(sid)
+
+    def quality(self, sid):
+        return self.qualities.get(sid, self.default)
+
+
+class Settings:
+    """haltia_kit's Settings in memory."""
+
+    def __init__(self, **values):
+        self.values = dict(values)
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def set(self, key, value):
+        self.values[key] = value
+        return True
+
+
 class Work:
     """Runs work at once, or holds it until run() when held."""
 

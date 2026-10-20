@@ -39,7 +39,7 @@ class Case(unittest.TestCase):
         events = fake.Events()
         events.changed = lambda t: self.m.changed()
         events.playing = lambda on: self.m.changed()
-        self.s = playback.Session(fake.Source(), lambda: self.player, fake.Work(),
+        self.s = playback.Session(fake.Sources(fake.Source()), lambda: self.player, fake.Work(),
                                   fake.Later(), events)
         self.stopped = self.shown = 0
         self.m = mpris.Mpris(self.ours, APP_ID, "Тест", self.s, self.stop, self.show,

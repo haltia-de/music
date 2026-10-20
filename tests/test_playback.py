@@ -17,9 +17,8 @@ class Case(unittest.TestCase):
     def session(self, source):
         self.src, self.player = source, FakePlayer()
         self.work, self.later, self.events = fake.Work(), fake.Later(), fake.Events()
-        self.s = playback.Session(source, lambda: self.player, self.work, self.later,
-                                  self.events)
-        self.s.quality = "low"
+        self.s = playback.Session(fake.Sources(source), lambda: self.player, self.work,
+                                  self.later, self.events)
         return self.s
 
     def told(self, event=None):
@@ -219,6 +218,43 @@ class State(Case):
         self.s.play_radio("r", [track(1)], 0)
         self.s.ended()
         self.assertEqual(self.s.state, "stopped")
+
+
+class TwoSources(Case):
+    """Every track is played by its own source."""
+
+    def setUp(self):
+        self.other = fake.Source(batches=[[dict(track(9), source="other")]])
+        self.other.id = "other"
+        super().setUp()
+        self.sources = fake.Sources(self.src, self.other)
+        self.sources.qualities["other"] = "flac"
+        self.s.sources = self.sources
+
+    def test_each_track_from_its_source_in_its_quality(self):
+        self.s.play_list([track(1), dict(track(2), source="other")], 0)
+        self.assertEqual(self.player.what, "fake://low/1")
+        self.s.ended()
+        self.assertEqual(self.player.what, "fake://flac/2")
+
+    def test_a_radio_grows_and_learns_from_its_own_source(self):
+        mine = dict(track(1), source="other")
+        self.s.play_radio("r", [mine], 0)
+        self.assertEqual(self.other.asked, [("r", mine)])
+        self.assertEqual([t["id"] for t in self.s.tracks], ["1", "9"])
+        self.assertEqual([e for _r, e, _i, _s in self.other.told], ["start"])
+        self.assertEqual(self.src.asked + self.src.told, [])
+
+    def test_same_ids_of_two_sources_are_two_tracks(self):
+        self.other.batches = [[track(1)]]
+        self.s.play_radio("r", [dict(track(1), source="other")], 0)
+        self.assertEqual(len(self.s.tracks), 2)
+
+    def test_a_source_gone_gives_way(self):
+        self.s.play_list([dict(track(1), source="gone"), track(2)], 0)
+        self.assertTrue(self.events.failures)
+        self.later.fire()
+        self.assertEqual(self.player.what, "fake://low/2")
 
 
 if __name__ == "__main__":

@@ -45,10 +45,46 @@ A track is a dict: kind "track", source, id, title, artist, duration
 (seconds or None), cover, and optionally album (its title).
 
 A source may block (network): haltia-music calls it from a worker thread.
+
+Sources(found, settings, folder, work, later, signed, hearts, failed) holds
+the sources found with what each keeps apart. No GTK; every call comes from
+the window's thread.
+  found         {id: SOURCE}, as load() gives
+  settings      get(key, default) and set(key, value), as haltia_kit's
+                Settings; keeps off (the ids switched off), source (the one
+                shown) and quality.<id>
+  folder        where each source's answers are kept, data-<id>.json
+  work, later   as for playback.Session
+  signed(id)    the sign-in of a source changed
+  hearts()      hearts are to be drawn again
+  failed(text)  a heart the service refused
+
+all()               the sources, Яндекс first (ORDER), the rest by id
+on()                the switched-on ones, in that order
+get(id)             a source, or None
+is_on(id)
+switch(id, on)      True if that changed anything; signing in, answers and
+                    what plays stay as they are
+shown               the source the pages show: the one kept, else the first
+                    switched on; None when none is
+show_next()         the next switched-on one is shown
+answers(id)         its answers.Answers
+likes(id)           its likes.Likes
+quality(id), set_quality(id, quality)
+signin(id)          {"kind": "in", "name"} | {"kind": "out"} |
+                    {"kind": "getting"} | {"kind": "waiting", "code",
+                    "url", "qr"} | {"kind": "failed", "note"}
+sign_in(id)         asks the source for a code, then waits for it to be
+                    confirmed; signed(id) at every step
+sign_out(id)        the account and its answers and hearts are forgotten
 """
 import importlib
+import os
 import pkgutil
 import sys
+
+import answers
+import likes
 
 REQUIRED = ("id", "label", "logged_in", "login_start", "login_wait", "logout", "account",
             "home", "home_row", "browse", "tracks", "radio_next", "search", "stream_url")
@@ -72,3 +108,132 @@ def load():
             continue
         found[src.id] = src
     return found
+
+
+ORDER = ("yandex", "music_assistant")
+
+
+class Sources:
+    def __init__(self, found, settings, folder, work, later, signed, hearts, failed):
+        self.found, self.settings, self.work = found, settings, work
+        self.signed = signed
+        rank = {sid: n for n, sid in enumerate(ORDER)}
+        self.ids = sorted(found, key=lambda sid: (rank.get(sid, len(ORDER)), sid))
+        self._move_old(folder)
+        self.kept, self.hearts, self.states, self.ages = {}, {}, {}, {}
+        for sid in self.ids:
+            src = found[sid]
+            self.kept[sid] = answers.Answers(src, work, later,
+                                             os.path.join(folder, "data-%s.json" % sid))
+            self.hearts[sid] = likes.Likes(src, self.kept[sid], work, hearts, failed)
+            self.states[sid] = self._now(sid)
+            self.ages[sid] = 0
+
+    def _move_old(self, folder):
+        """Before 2.4 there was Яндекс only: its answers and quality."""
+        old, new = os.path.join(folder, "data.json"), os.path.join(folder, "data-yandex.json")
+        try:
+            if os.path.exists(old) and not os.path.exists(new):
+                os.replace(old, new)
+        except OSError:
+            pass
+        quality = self.settings.get("quality", None)
+        if quality and self.settings.get("quality.yandex", None) is None:
+            self.settings.set("quality.yandex", quality)
+
+    # --- which ones -------------------------------------------------------------
+    def all(self):
+        return [self.found[sid] for sid in self.ids]
+
+    def on(self):
+        return [src for src in self.all() if self.is_on(src.id)]
+
+    def get(self, sid):
+        return self.found.get(sid)
+
+    def _off(self):
+        return [sid for sid in (self.settings.get("off", "") or "").split(",") if sid]
+
+    def is_on(self, sid):
+        return sid in self.found and sid not in self._off()
+
+    def switch(self, sid, on):
+        off = [i for i in self._off() if i != sid] + ([] if on else [sid])
+        if off == self._off():
+            return False
+        self.settings.set("off", ",".join(off))
+        return True
+
+    @property
+    def shown(self):
+        on = self.on()
+        kept = self.settings.get("source", None)
+        return next((src for src in on if src.id == kept), on[0] if on else None)
+
+    def show_next(self):
+        on, now = self.on(), self.shown
+        if len(on) > 1:
+            self.settings.set("source", on[(on.index(now) + 1) % len(on)].id)
+
+    # --- what each keeps --------------------------------------------------------
+    def answers(self, sid):
+        return self.kept[sid]
+
+    def likes(self, sid):
+        return self.hearts[sid]
+
+    def quality(self, sid):
+        qualities = [q[0] for q in getattr(self.found.get(sid), "qualities", None) or []]
+        kept = self.settings.get("quality." + sid, None)
+        return kept if kept in qualities else (qualities[0] if qualities else "")
+
+    def set_quality(self, sid, quality):
+        self.settings.set("quality." + sid, quality)
+
+    # --- signing in -------------------------------------------------------------
+    def signin(self, sid):
+        return self.states[sid]
+
+    def _now(self, sid):
+        src = self.found[sid]
+        return {"kind": "in", "name": src.account()} if src.logged_in() else {"kind": "out"}
+
+    def _set(self, sid, age, state):
+        if age != self.ages[sid]:
+            return False  # signed out, or begun again, meanwhile
+        self.states[sid] = state
+        self.signed(sid)
+        return True
+
+    def sign_in(self, sid):
+        if self.states[sid]["kind"] in ("getting", "waiting"):
+            return
+        self.ages[sid] += 1
+        age, src = self.ages[sid], self.found[sid]
+        self._set(sid, age, {"kind": "getting"})
+        self.work(lambda _a: src.login_start(), None,
+                  lambda res, err: self._code(sid, age, res, err))
+
+    def _code(self, sid, age, res, error):
+        if error or not res or not (res.get("qr") or res.get("code")):
+            self._set(sid, age, {"kind": "failed", "note": "Не удалось начать вход: нет связи?"})
+            return
+        if self._set(sid, age, {"kind": "waiting", "code": res.get("code", ""),
+                                "url": res.get("url", ""), "qr": res.get("qr", "")}):
+            src = self.found[sid]
+            self.work(lambda _a: src.login_wait(), None,
+                      lambda ok, err: self._confirmed(sid, age, ok, err))
+
+    def _confirmed(self, sid, age, ok, error):
+        if error or not ok:
+            self._set(sid, age, {"kind": "failed", "note": "Вход не подтверждён."})
+        else:
+            self._set(sid, age, self._now(sid))
+            self.hearts[sid].refresh()
+
+    def sign_out(self, sid):
+        self.ages[sid] += 1
+        self.found[sid].logout()
+        self.hearts[sid].reset()
+        self.kept[sid].reset()
+        self._set(sid, self.ages[sid], {"kind": "out"})

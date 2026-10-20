@@ -2,8 +2,9 @@
 """What plays: a list from one of its tracks on, or a radio that goes on and
 on. Session is all of it, the window only shows what it says.
 
-Session(source, player, work, later, events):
-  source        the music service (see sources/__init__.py)
+Session(sources, player, work, later, events):
+  sources       get(id), the source of a track by its "source", and
+                quality(id), what it plays in (sources.Sources)
   player()      gives the player, made the first time it is needed:
                 haltia_kit.sound.Player (play(url), toggle(), seek(seconds),
                 position, stop()), which keeps the machine awake while it
@@ -25,21 +26,23 @@ events come with every change of it.
 
 A track one leaves before its end is a skip, paused or not; one that plays
 to its end is finished. A radio says so to its service, which learns from it.
+Every track is played by its own source; a radio grows from the source of
+the track it began with.
 """
 RADIO_AHEAD = 2  # ask the radio for more when this few tracks are left
 GIVE_WAY = 2  # seconds a track that does not play stays before the next
 
 
 class Session:
-    def __init__(self, source, player, work, later, events):
-        self.src = source
+    def __init__(self, sources, player, work, later, events):
+        self.sources = sources
         self.make_player = player
         self.player = None
         self.work, self.later, self.events = work, later, events
-        self.quality = ""
         self.tracks = []  # the queue
         self.index = -1
         self.radio = None  # the radio playing, or None
+        self.radio_src = None  # the source it comes from
         self.playing = False
         self.going = False  # it plays on, unless paused, till the queue runs out
         self.under_way = False  # the current track plays (or played) its sound
@@ -89,7 +92,7 @@ class Session:
         self._leave()
         if self.player:
             self.player.stop()
-        self.tracks, self.index, self.radio = [], -1, None
+        self.tracks, self.index, self.radio, self.radio_src = [], -1, None, None
         self.asking, self.stalled = None, 0
         self._halt()
         self.events.changed(None)
@@ -125,6 +128,7 @@ class Session:
             return
         self._leave()
         self.radio, self.tracks, self.index = radio, list(tracks), -1
+        self.radio_src = self.sources.get(tracks[i]["source"]) if radio else None
         self.asking, self.stalled = None, 0
         self._start(i)
 
@@ -140,7 +144,8 @@ class Session:
         self.index, self.going = i, True
         track = self.tracks[i]
         self.events.changed(track)
-        self.work(lambda t: self.src.stream_url(t, self.quality), track,
+        src, sid = self.sources.get(track["source"]), track["source"]
+        self.work(lambda t: src.stream_url(t, self.sources.quality(sid)) if src else "", track,
                   lambda url, err: self._play(track, url, err))
         if self.radio:
             self._feedback("start", track, 0)
@@ -187,19 +192,19 @@ class Session:
         if self.asking or not self.radio:
             return
         token = self.asking = object()
-        radio, last = self.radio, self.tracks[-1] if self.tracks else None
-        self.work(lambda _a: self.src.radio_next(radio, last), None,
+        src, radio, last = self.radio_src, self.radio, self.tracks[-1] if self.tracks else None
+        self.work(lambda _a: src.radio_next(radio, last), None,
                   lambda tracks, err: self._grew(token, tracks, err))
 
     def _grew(self, token, tracks, error):
         if token is not self.asking:
             return  # another radio, or none, plays now
         self.asking = None
-        known = {t["id"] for t in self.tracks}
+        known = {(t["source"], t["id"]) for t in self.tracks}
         new = []
         for t in [] if error else tracks or []:
-            if t["id"] not in known:
-                known.add(t["id"])
+            if (t["source"], t["id"]) not in known:
+                known.add((t["source"], t["id"]))
                 new.append(t)
         if new:
             self.tracks.extend(new)
@@ -217,7 +222,7 @@ class Session:
                 self._halt()
 
     def _feedback(self, event, track, seconds):
-        send = getattr(self.src, "feedback", None)
+        send = getattr(self.radio_src, "feedback", None)
         if send:
             radio = self.radio
             self.work(lambda _a: send(radio, event, track, seconds), None, None)

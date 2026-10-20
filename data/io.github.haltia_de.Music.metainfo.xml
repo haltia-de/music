@@ -18,6 +18,12 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="2.4.0" date="2026-10-20">
+      <description>
+        <p>The settings have a Sources section: a card per music service with a switch, the account and signing in and out. Signing in moved there; the home page leads to it. Saved pages and the sound quality stay as they were.</p>
+        <p xml:lang="ru">В настройках появился раздел «Источники»: карточка на каждый музыкальный сервис с переключателем, аккаунтом, входом и выходом. Вход теперь там, главная ведёт к нему. Сохранённые страницы и качество звука остаются прежними.</p>
+      </description>
+    </release>
     <release version="2.3.1" date="2026-10-19">
       <description>
         <p>Outside the Haltia shell the window has the desktop's usual buttons, close among them.</p>

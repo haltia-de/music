@@ -1,3 +1,10 @@
+haltia-music (2.4.0) unstable; urgency=medium
+
+  * The settings have a Sources section, a card per service with a switch,
+    the account and signing in and out; everything is kept per service.
+
+ -- Haltia <rensomail@gmail.com>  Tue, 20 Oct 2026 13:00:00 +0300
+
 haltia-music (2.3.1) unstable; urgency=medium
 
   * Outside the Haltia shell the window has the desktop's buttons, close

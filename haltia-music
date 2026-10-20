@@ -9,18 +9,22 @@ folders, one list at a time, and ← goes back. A tap only ever opens: music
 starts when one taps a track in a list or «▶ Слушать» on a list or a radio.
 A radio (Моя волна) plays on and on, fetching more as it goes, and its list
 grows with it. The search field finds tracks. A heart on a track puts it
-into Мне нравится or takes it out. The gear opens the settings: the sound
-quality, the lowest unless chosen (~/.config/haltia/music.conf). The bar at the bottom shows the track
-and holds its heart, back, pause and on, and the time bar seeks.
+into Мне нравится or takes it out. The gear opens the settings
+(~/.config/haltia/music.conf): Источники, a card per service, switched on
+or off, signing in and out; the sound quality of each, the lowest unless
+chosen. With more than one switched on, a button in the header names the
+service the pages show and goes to the next. The bar at the bottom shows
+the track and holds its heart, back, pause and on, and the time bar seeks.
 
 Pages opened stay built until one goes back past them, so ← is at once and
 where one left it. The service's answers are kept in memory and on disk
-(~/.cache/haltia-music/data.json): a page shows what was known at once and
+(~/.cache/haltia-music/data-<service>.json): a page shows what was known at once and
 asks the service again when that is older than a quarter of an hour. Covers
 are kept on disk and, decoded, in memory.
 
-Signing in shows a QR code to scan with the phone and a code to enter at
-the service's page, whichever is easier.
+Signing in, in the service's card, shows a QR code to scan with the phone
+and a code to enter at the service's page, whichever is easier; a service
+not signed in shows the way there instead of its pages.
 
 The music goes on while other programs are in front; closing the window
 stops it and quits. While it plays (not paused) a logind inhibitor keeps
@@ -66,17 +70,16 @@ LIB = next((d for d in (HERE, os.path.join(os.path.dirname(HERE), "share", "halt
             if os.path.isdir(os.path.join(d, "sources"))),
            os.path.join(os.path.dirname(HERE), "lib", "haltia-music"))
 sys.path.insert(0, LIB)
-import answers  # noqa: E402
-import likes  # noqa: E402
 import mpris  # noqa: E402
 import playback  # noqa: E402
 import sources  # noqa: E402
 
 CACHE = os.path.join(GLib.get_user_cache_dir(), "haltia-music")
-DATA = os.path.join(CACHE, "data.json")
 PIXBUFS = 400  # decoded covers kept in memory
 UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
 CARD = 160  # the cover of a card on the home page
+# The hearts of a track whose source is gone: none.
+NO_LIKES = SimpleNamespace(able=False, liked=lambda _t: False, toggle=lambda _t: None)
 QR = 360
 
 CSS = b"""
@@ -270,15 +273,12 @@ class Covers:
 class Music(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID)
-        self.sources = sources.load()
-        self.src = self.sources[min(self.sources)] if self.sources else None
         self.covers = Covers()
-        self.qualities = getattr(self.src, "qualities", None) or []
         self.settings = Settings("music")
-        self.quality = self.settings.get("quality", self.qualities[0][0] if self.qualities else "")
-        self.answers = answers.Answers(self.src, self.work, self.later, DATA)
-        self.likes = likes.Likes(self.src, self.answers, self.work,
-                                 lambda: self.update_hearts(), self.say)
+        self.sources = sources.Sources(sources.load(), self.settings, CACHE, self.work,
+                                       self.later, self.on_signed,
+                                       lambda: self.update_hearts(), self.say)
+        self.stale = False  # the pages are made anew on leaving the settings
         # Where one is: the section's root first, then what was opened in it.
         # A view is a dict; its page and widgets live in it while it is open.
         self.views = []
@@ -292,11 +292,10 @@ class Music(Gtk.Application):
                                  playing=self.on_playing, failed=self.say)
         # The player keeps the machine awake while it plays, not paused.
         self.session = playback.Session(
-            self.src, lambda: sound.Player("Музыка", on_end=lambda: self.session.ended(),
+            self.sources, lambda: sound.Player("Музыка", on_end=lambda: self.session.ended(),
                                            on_time=self.on_time, on_pause=self.session.paused,
                                            on_error=self.session.ended),
             self.work, self.later, events)
-        self.session.quality = self.quality
 
     # --- the window ---------------------------------------------------------
     def do_activate(self):
@@ -330,6 +329,11 @@ class Music(Gtk.Application):
         self.gear.connect("clicked", lambda *_a: self.open_settings())
         self.gear.set_no_show_all(True)
         header.pack_end(self.gear)
+        # The source the pages show, the next one at a tap (as Видео's).
+        self.source_btn = styled(Gtk.Button(), "nav")
+        self.source_btn.connect("clicked", lambda *_a: self.show_next_source())
+        self.source_btn.set_no_show_all(True)
+        header.pack_end(self.source_btn)
         self.win.set_titlebar(header)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -342,12 +346,10 @@ class Music(Gtk.Application):
         self.win.show_all()
         self.bar.hide()
         self.win.set_focus(None)
-        if not self.src:
+        if not self.sources.all():
             self.note_only("Нет ни одного музыкального сервиса.")
-        elif self.src.logged_in():
-            self.show_main()
         else:
-            self.show_login()
+            self.show_main()
         try:
             self.mpris = mpris.Mpris(self.get_dbus_connection(), APP_ID, "Музыка",
                                      self.session, self.stop, self.win.present,
@@ -375,38 +377,42 @@ class Music(Gtk.Application):
         for btn in (self.home_btn, self.browse_btn, self.gear):
             btn.set_visible(on)
         self.back_btn.set_visible(on and len(self.views) > 1)
+        shown = self.sources.shown
+        self.source_btn.set_label(shown.label if shown else "")
+        self.source_btn.set_visible(on and len(self.sources.on()) > 1)
 
     # --- signing in -----------------------------------------------------------
-    def show_login(self):
-        self.show_nav(False)
-        self.clear_page()
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
-        box.set_valign(Gtk.Align.CENTER)
-        label = styled(Gtk.Label(label="Войдите в %s, чтобы слушать музыку." % self.src.label),
-                       "note")
-        box.pack_start(label, False, False, 0)
-        btn = styled(Gtk.Button(label="Войти"), "login")
+    def signed_in(self, sid):
+        return bool(sid) and self.sources.signin(sid)["kind"] == "in"
+
+    def ask_sign_in(self, view):
+        """Instead of a page of a source not signed in, or of none."""
+        sid = view.get("src")
+        if sid:
+            text, label = ("Войдите в %s, чтобы слушать музыку."
+                           % self.sources.get(sid).label, "Войти")
+        else:
+            text, label = "Включите источник музыки в настройках.", "Настройки"
+        self.say(text, view)
+        btn = styled(Gtk.Button(label=label), "login")
         btn.set_halign(Gtk.Align.CENTER)
-        btn.connect("clicked", lambda *_a: self.login())
-        box.pack_start(btn, False, False, 0)
-        self.page.pack_start(box, True, True, 0)
-        self.page.show_all()
+        btn.connect("clicked", lambda *_a: self.open_settings(sid))
+        view["box"].pack_start(btn, False, False, 8)
+        btn.show()
 
-    def login(self):
-        self.note_only("Получаю код…")
-        self.work(lambda _a: self.src.login_start(), None, self._login_code)
+    def on_signed(self, sid):
+        """A source signed in or out, or a step of signing in."""
+        self.stale = True
+        view = self.settings_view()
+        if view:
+            self.fill_settings(view)
+        elif sid == getattr(self.sources.shown, "id", None):
+            self.remake_pages()
 
-    def _login_code(self, res, error):
-        qr = res and res.get("qr") and qr_code(res["qr"], QR)
-        if error or not res or not (qr or res.get("code")):
-            self.note_only("Не удалось начать вход: нет связи?")
-            GLib.timeout_add_seconds(4, lambda: (self.show_login(), False)[1])
-            return
-        self.clear_page()
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=32)
-        outer.set_valign(Gtk.Align.CENTER)
-        ways = Gtk.Box(spacing=64)
-        ways.set_halign(Gtk.Align.CENTER)
+    def login_code(self, state):
+        """The ways in of a source signing in: a QR code, a code to enter."""
+        qr = state.get("qr") and qr_code(state["qr"], QR)
+        ways = Gtk.Box(spacing=48)
         if qr:
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
             col.set_valign(Gtk.Align.CENTER)
@@ -414,36 +420,23 @@ class Music(Gtk.Application):
             col.pack_start(styled(Gtk.Label(label="Наведите камеру телефона"), "note"),
                            False, False, 0)
             ways.pack_start(col, False, False, 0)
-        if res.get("code"):
+        if state.get("code"):
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
             col.set_valign(Gtk.Align.CENTER)
             first = "или откройте" if qr else "На телефоне или компьютере откройте"
-            url = res["url"].replace("https://", "")
+            url = state["url"].replace("https://", "")
             for text, cls in ((first, "note"), (url, "code"), ("и введите код", "note"),
-                              (res["code"], "code")):
-                col.pack_start(styled(Gtk.Label(label=text), cls), False, False, 0)
+                              (state["code"], "code")):
+                col.pack_start(styled(Gtk.Label(label=text, xalign=0), cls), False, False, 0)
             ways.pack_start(col, False, False, 0)
-        outer.pack_start(ways, False, False, 0)
-        outer.pack_start(styled(Gtk.Label(label="Жду подтверждения…"), "note"), False, False, 0)
-        self.page.pack_start(outer, True, True, 0)
-        self.page.show_all()
-        self.work(lambda _a: self.src.login_wait(), None, self._login_done)
+        return ways
 
-    def _login_done(self, ok, error):
-        if error or not ok:
-            self.note_only("Вход не подтверждён.")
-            GLib.timeout_add_seconds(4, lambda: (self.show_login(), False)[1])
+    def logout(self, src):
+        if not dialogs.ask(self.win, "Выйти из %s?" % src.label, "Выйти"):
             return
-        self.show_main()
-
-    def logout(self):
-        if not dialogs.ask(self.win, "Выйти из %s?" % self.src.label, "Выйти"):
-            return
-        self.stop()
-        self.src.logout()
-        self.likes.reset()
-        self.answers.reset()
-        self.show_login()
+        if self.session.current and self.session.current["source"] == src.id:
+            self.stop()
+        self.sources.sign_out(src.id)
 
     # --- the pages --------------------------------------------------------------
     def show_main(self):
@@ -463,8 +456,20 @@ class Music(Gtk.Application):
         self.page.pack_start(self.stack, True, True, 0)
         self.page.show_all()
         self.win.set_focus(None)
-        self.likes.refresh()
+        shown = self.sources.shown
+        if shown and self.signed_in(shown.id):
+            self.sources.likes(shown.id).refresh()
         self.go_root("home")
+
+    def remake_pages(self):
+        """The pages of the source shown now, made anew."""
+        self.stale = False
+        self.drop_views()
+        self.go_root("home")
+
+    def show_next_source(self):
+        self.sources.show_next()
+        self.remake_pages()
 
     def drop_views(self):
         for view in self.views + list(self.roots.values()):
@@ -478,6 +483,10 @@ class Music(Gtk.Application):
             view["page"].destroy()
 
     def go_root(self, section):
+        if self.stale and self.settings_view():
+            self.remake_pages()
+            if section == "home":
+                return
         root = self.roots.get(section)
         if root is not None and self.views == [root]:
             if section == "home":
@@ -488,6 +497,7 @@ class Music(Gtk.Application):
         if root is None:
             root = self.roots[section] = ({"kind": "home"} if section == "home" else
                                           {"kind": "browse", "id": "", "title": "Обзор"})
+            root["src"] = getattr(self.sources.shown, "id", None)
             self.views = [root]
             self.make_page(root)
         else:
@@ -495,12 +505,15 @@ class Music(Gtk.Application):
         self.show_top()
 
     def push(self, view):
+        view.setdefault("src", self.views[-1].get("src") if self.views else None)
         self.views.append(view)
         self.make_page(view)
         self.show_top()
 
     def go_back(self):
-        if len(self.views) > 1:
+        if self.stale and self.views[-1]["kind"] == "settings":
+            self.remake_pages()
+        elif len(self.views) > 1:
             self.drop(self.views.pop())
             self.show_top()
 
@@ -567,9 +580,13 @@ class Music(Gtk.Application):
         k = view["kind"]
         if k == "settings":
             return
+        if not self.signed_in(view.get("src")):
+            self.ask_sign_in(view)
+            return
+        src, answers = self.sources.get(view["src"]), self.sources.answers(view["src"])
         if k == "home":
             self.say("Загружаю…", view)
-            self.answers.get("home", None, lambda rows, err: self._home(view, rows, err))
+            answers.get("home", None, lambda rows, err: self._home(view, rows, err))
         elif k == "radio":
             if self.radio_on(view):
                 self.radio_view = view
@@ -577,7 +594,7 @@ class Music(Gtk.Application):
             else:
                 # Its first tracks, shown as a list's are; they play only when asked.
                 self.say("Загружаю…", view)
-                self.work(lambda r: self.src.radio_next(r, None), view["id"],
+                self.work(lambda r: src.radio_next(r, None), view["id"],
                           lambda tracks, err: self._radio_first(view, tracks, err))
         elif view.get("items") is not None:
             self._items(view, view["items"], None)
@@ -585,7 +602,7 @@ class Music(Gtk.Application):
             what, arg = {"browse": ("browse", view.get("id")), "list": ("tracks", view.get("id")),
                          "search": ("search", view.get("query"))}[k]
             self.say("Ищу…" if k == "search" else "Загружаю…", view)
-            self.answers.get(what, arg, lambda items, err: self._items(view, items, err))
+            answers.get(what, arg, lambda items, err: self._items(view, items, err))
 
     def _items(self, view, items, error):
         if view["kind"] == "search":
@@ -628,8 +645,11 @@ class Music(Gtk.Application):
         if not query or not self.find_btn.get_sensitive():
             return
         self.win.set_focus(None)
-        self.find_btn.set_sensitive(False)
-        self.push({"kind": "search", "query": query, "title": "Поиск: «%s»" % query})
+        shown = self.sources.shown
+        sid = shown.id if shown else None
+        self.find_btn.set_sensitive(not self.signed_in(sid))
+        self.push({"kind": "search", "query": query, "title": "Поиск: «%s»" % query,
+                   "src": sid})
 
     def open_item(self, item, row=None, tracks=None):
         """Open what was tapped; music never starts from here."""
@@ -658,61 +678,104 @@ class Music(Gtk.Application):
             self.play_list(tracks, 0)
 
     # --- the settings -------------------------------------------------------------
-    def open_settings(self):
+    def open_settings(self, sign_in=None):
+        """The settings; with sign_in, that source begins to sign in."""
         if self.views[-1]["kind"] != "settings":
             self.push({"kind": "settings", "title": "Настройки"})
+        if sign_in and self.sources.signin(sign_in)["kind"] in ("out", "failed"):
+            self.sources.sign_in(sign_in)
+
+    def settings_view(self):
+        view = self.views[-1] if self.views else None
+        return view if view and view["kind"] == "settings" and view.get("alive") else None
 
     def settings_page(self, view, box):
-        box.pack_start(styled(Gtk.Label(label="Аккаунт", xalign=0), "section"),
+        view["cards"] = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.pack_start(view["cards"], False, False, 0)
+        self.fill_settings(view)
+
+    def fill_settings(self, view):
+        box = view["cards"]
+        clear(box)
+        box.pack_start(styled(Gtk.Label(label="Источники", xalign=0), "section"),
                        False, False, 0)
-        row = styled(Gtk.Box(spacing=16), "account")
-        name = self.src.account()
+        for src in self.sources.all():
+            box.pack_start(self.source_card(src), False, False, 0)
+        view["choices"] = []
+        many = len(self.sources.all()) > 1
+        for src in self.sources.all():
+            qualities = getattr(src, "qualities", None) or []
+            if not qualities:
+                continue
+            title = "Качество звука" + (": %s" % src.label if many else "")
+            box.pack_start(styled(Gtk.Label(label=title, xalign=0), "section"),
+                           False, False, 8)
+            for qid, name, hint in qualities:
+                btn = styled(Gtk.Button(), "choice")
+                row = Gtk.Box(spacing=16)
+                text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                text.pack_start(styled(Gtk.Label(label=name, xalign=0), "ttl"), False, False, 0)
+                text.pack_start(styled(Gtk.Label(label=hint, xalign=0), "sub"), False, False, 0)
+                row.pack_start(text, True, True, 0)
+                mark = styled(Gtk.Label(label="✓"), "mark")
+                row.pack_end(mark, False, False, 0)
+                btn.add(row)
+                btn.connect("clicked", lambda _b, s=src.id, q=qid: self.set_quality(view, s, q))
+                box.pack_start(btn, False, False, 0)
+                view["choices"].append((src.id, qid, btn, mark))
+        box.show_all()
+        self.mark_quality(view)
+
+    def source_card(self, src):
+        """A source: switched on or off, its account, signing in and out."""
+        state = self.sources.signin(src.id)
+        card = styled(Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16), "account")
+        top = Gtk.Box(spacing=16)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         text.set_valign(Gtk.Align.CENTER)
-        text.pack_start(styled(Gtk.Label(label=self.src.label, xalign=0), "ttl"), False, False, 0)
-        if name:
-            text.pack_start(styled(Gtk.Label(label=name, xalign=0), "sub"), False, False, 0)
-        row.pack_start(text, True, True, 0)
-        out = styled(Gtk.Button(label="Выйти"), "quiet")
-        out.set_valign(Gtk.Align.CENTER)
-        out.connect("clicked", lambda *_a: self.logout())
-        row.pack_end(out, False, False, 0)
-        box.pack_start(row, False, False, 0)
-        view["choices"] = []
-        if not self.qualities:
-            return
-        box.pack_start(styled(Gtk.Label(label="Качество звука", xalign=0), "section"),
-                       False, False, 8)
-        choices = []
-        for qid, title, hint in self.qualities:
-            btn = styled(Gtk.Button(), "choice")
-            row = Gtk.Box(spacing=16)
-            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            text.pack_start(styled(Gtk.Label(label=title, xalign=0), "ttl"), False, False, 0)
-            text.pack_start(styled(Gtk.Label(label=hint, xalign=0), "sub"), False, False, 0)
-            row.pack_start(text, True, True, 0)
-            mark = styled(Gtk.Label(label="✓"), "mark")
-            row.pack_end(mark, False, False, 0)
-            btn.add(row)
-            btn.connect("clicked", lambda _b, q=qid: self.set_quality(view, q))
-            box.pack_start(btn, False, False, 0)
-            choices.append((qid, btn, mark))
-        view["choices"] = choices
-        self.mark_quality(view)
+        text.pack_start(styled(Gtk.Label(label=src.label, xalign=0), "ttl"), False, False, 0)
+        sub = {"in": state.get("name") or "Вход выполнен", "getting": "Получаю код…",
+               "waiting": "Жду подтверждения…"}.get(state["kind"], state.get("note")
+                                                    or "Вход не выполнен")
+        text.pack_start(styled(Gtk.Label(label=sub, xalign=0), "sub"), False, False, 0)
+        top.pack_start(text, True, True, 0)
+        if state["kind"] == "in":
+            btn = styled(Gtk.Button(label="Выйти"), "quiet")
+            btn.connect("clicked", lambda *_a: self.logout(src))
+        elif state["kind"] in ("out", "failed"):
+            btn = styled(Gtk.Button(label="Войти"), "quiet")
+            btn.connect("clicked", lambda *_a: self.sources.sign_in(src.id))
+        else:
+            btn = None
+        if btn:
+            btn.set_valign(Gtk.Align.CENTER)
+            top.pack_start(btn, False, False, 0)
+        switch = Gtk.Switch(active=self.sources.is_on(src.id))
+        switch.set_valign(Gtk.Align.CENTER)
+        switch.connect("notify::active", lambda sw, _p: self.switch_source(src, sw.get_active()))
+        top.pack_start(switch, False, False, 0)
+        card.pack_start(top, False, False, 0)
+        if state["kind"] == "waiting":
+            card.pack_start(self.login_code(state), False, False, 0)
+        return card
+
+    def switch_source(self, src, on):
+        if self.sources.switch(src.id, on):
+            self.stale = True
 
     def mark_quality(self, view):
-        for qid, btn, mark in view["choices"]:
+        for sid, qid, btn, mark in view["choices"]:
+            now = qid == self.sources.quality(sid)
             ctx = btn.get_style_context()
-            (ctx.add_class if qid == self.quality else ctx.remove_class)("current")
-            mark.set_opacity(1 if qid == self.quality else 0)
+            (ctx.add_class if now else ctx.remove_class)("current")
+            mark.set_opacity(1 if now else 0)
 
-    def set_quality(self, view, quality):
-        if quality == self.quality:
+    def set_quality(self, view, sid, quality):
+        if quality == self.sources.quality(sid):
             return
-        self.quality = self.session.quality = quality
-        self.settings.set("quality", quality)
+        self.sources.set_quality(sid, quality)
         self.mark_quality(view)
-        if self.session.current:
+        if self.session.current and self.session.current["source"] == sid:
             self.say("Новое качество — со следующего трека.", view)
 
     # --- the home page --------------------------------------------------------
@@ -742,13 +805,16 @@ class Music(Gtk.Application):
             show = view["shows"][row["id"]] = (
                 lambda items, err, r=row, s=section, c=cards: self._home_row(view, r, s, c,
                                                                             items, err))
-            self.answers.get("home_row", row["id"], show)
+            self.sources.answers(view["src"]).get("home_row", row["id"], show)
 
     def refresh_home(self, view):
         view["page"].get_vadjustment().set_value(0)
-        self.likes.refresh(force=True)
+        if not self.signed_in(view.get("src")):
+            return
+        self.sources.likes(view["src"]).refresh(force=True)
         for row in view.get("rows") or []:
-            self.answers.get("home_row", row["id"], view["shows"][row["id"]], force=True)
+            self.sources.answers(view["src"]).get("home_row", row["id"],
+                                                  view["shows"][row["id"]], force=True)
 
     def _home_row(self, view, row, section, cards, items, error):
         if not view.get("alive") or error or view["sections"].get(row["id"]) is not section:
@@ -781,7 +847,7 @@ class Music(Gtk.Application):
         section.set_no_show_all(False)
         section.show_all()
 
-    def cover(self, item, size, glyph_px):
+    def cover(self, item, size, glyph_px, src=None):
         if item.get("cover"):
             image = Gtk.Image()
             image.set_size_request(size, size)
@@ -789,7 +855,7 @@ class Music(Gtk.Application):
             return image
         # A radio with a sign of its own gets a colour of its own, the same
         # each time; Мне нравится is red.
-        likes_list = getattr(self.src, "likes_list", None)
+        likes_list = getattr(self.sources.get(src), "likes_list", None)
         tint = "like" if likes_list and item.get("id") == likes_list else (
             "c%d" % (sum(map(ord, item["id"])) % 6) if kind(item) == "radio" and item.get("glyph")
             else kind(item))
@@ -823,7 +889,7 @@ class Music(Gtk.Application):
             row = Gtk.ListBoxRow()
             row.track_index = i
             box = Gtk.Box(spacing=16)
-            box.pack_start(self.cover(t, 64, 28), False, False, 0)
+            box.pack_start(self.cover(t, 64, 28, view.get("src")), False, False, 0)
             text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             text.set_valign(Gtk.Align.CENTER)
             ttl = styled(Gtk.Label(label=t["title"], xalign=0), "ttl")
@@ -838,10 +904,10 @@ class Music(Gtk.Application):
             if kind(t) == "track":
                 dur = styled(Gtk.Label(label=mmss(t.get("duration"))), "sub")
                 box.pack_start(dur, False, False, 0)
-                if self.likes.able:
+                if self.likes_of(t).able:
                     heart = styled(Gtk.Button(), "heart")
                     heart.set_valign(Gtk.Align.CENTER)
-                    heart.connect("clicked", lambda _b, tr=t: self.likes.toggle(tr))
+                    heart.connect("clicked", lambda _b, tr=t: self.likes_of(tr).toggle(tr))
                     view["hearts"].append((heart, t))
                     box.pack_start(heart, False, False, 0)
             else:
@@ -853,6 +919,7 @@ class Music(Gtk.Application):
 
     def radio_on(self, view):
         return (view["kind"] == "radio" and self.session.radio == view.get("id")
+                and getattr(self.session.radio_src, "id", None) == view.get("src")
                 and bool(self.session.tracks))
 
     def on_row(self, _list, row, view):
@@ -885,8 +952,13 @@ class Music(Gtk.Application):
                 (ctx.add_class if same else ctx.remove_class)("playing")
 
     # --- what one likes ---------------------------------------------------------
+    def likes_of(self, track):
+        """The hearts of the track's source; none for a source gone."""
+        sid = track["source"] if track else None
+        return self.sources.likes(sid) if self.sources.get(sid) else NO_LIKES
+
     def set_heart(self, btn, track):
-        on = self.likes.liked(track)
+        on = self.likes_of(track).liked(track)
         btn.set_label("♥" if on else "♡")
         ctx = btn.get_style_context()
         (ctx.add_class if on else ctx.remove_class)("on")
@@ -895,8 +967,10 @@ class Music(Gtk.Application):
         for v in self.open_views(view):
             for btn, track in v.get("hearts", []):
                 self.set_heart(btn, track)
-        if self.likes.able and self.bar:
-            self.set_heart(self.bar_heart, self.session.current)
+        if self.bar:
+            current = self.session.current
+            self.bar_heart.set_visible(self.likes_of(current).able)
+            self.set_heart(self.bar_heart, current)
 
     # --- the bar ----------------------------------------------------------------
     def make_bar(self):
@@ -925,8 +999,9 @@ class Music(Gtk.Application):
         bar.pack_start(mid, True, True, 0)
         self.bar_heart = styled(Gtk.Button(label="♡"), "heart")
         self.bar_heart.set_valign(Gtk.Align.CENTER)
-        self.bar_heart.connect("clicked", lambda *_a: self.likes.toggle(self.session.current))
-        self.bar_heart.set_no_show_all(not self.likes.able)
+        self.bar_heart.connect("clicked", lambda *_a: self.likes_of(
+            self.session.current).toggle(self.session.current))
+        self.bar_heart.set_no_show_all(True)
         bar.pack_start(self.bar_heart, False, False, 0)
         for label, cls, cb in (("⏮", "ctl", self.session.prev),
                                ("▶", "ctl main", self.session.toggle),
@@ -1020,7 +1095,8 @@ class Music(Gtk.Application):
         self.radio_view = None
 
     def do_shutdown(self):
-        self.answers.flush()
+        for src in self.sources.all():
+            self.sources.answers(src.id).flush()
         Gtk.Application.do_shutdown(self)
 
     # --- background work -------------------------------------------------------

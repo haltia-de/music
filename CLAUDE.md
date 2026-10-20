@@ -69,9 +69,16 @@ There is no build or linter. Checks available:
   (the `SOURCE` object's methods and the track dict shape); read it before touching a source or
   adding one. `sources.load()` imports every module defining `SOURCE`; a module that fails to import,
   or whose `SOURCE` lacks a name in `sources.REQUIRED`, is skipped, never fatal. The app uses the
-  first source by id and knows nothing service-specific: what it needs from a service goes into the
+  sources through `Sources` and knows nothing service-specific: what it needs from a service goes into the
   contract (e.g. `likes_list`), and `tests/fake.py`'s `Source` keeps to it too
-  (`tests/test_contract.py`). Adding a service = adding a file there, no change to `haltia-music`.
+  (`tests/test_contract.py`). Adding a service = adding a file there, no change to `haltia-music`
+  (Music Assistant is the exception the plan reshapes the app for).
+- `sources.Sources` — the sources found with what each keeps apart: one `Answers` file and one
+  `Likes` per source, switched on or off (`off` in the settings), quality (`quality.<id>`), the
+  shown one (`source`, changed by the header button), and each one's sign-in steps (`signin`,
+  `sign_in`, `sign_out`). Every track carries `source`; playing and liking go to the track's
+  own source, so a view keeps the source it shows (`view["src"]`). Яндекс comes first (`ORDER`).
+  Before 2.4 there was Яндекс alone: `data.json` and `quality` move to its names once.
 - `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they share one event loop on a
   daemon thread (`_Loop`) and every public method blocks on its result. Account (tokens) kept
   by `vault.py` (`Vault`): in the Secret Service (libsecret; schema `io.github.haltia_de.Music`,
@@ -111,9 +118,11 @@ A track card on the home page opens its row's list (`row["list"]`) scrolled to t
 ### Settings
 
 The gear opens a `settings` view. Settings live in `~/.config/haltia/music.conf`, section `[music]`
-(`self.settings`, the kit's `Settings("music")`). `quality` is one of the
-source's `qualities` ids, the lowest by default, and is passed to `stream_url(track, quality)`; it
-applies from the next track.
+(`self.settings`, the kit's `Settings("music")`). «Источники» has a card per source (a switch, the
+account, «Войти»/«Выйти», the code while signing in); the cards are drawn anew on every sign-in
+step (`fill_settings`), and leaving the settings after a change makes the pages anew
+(`self.stale`). `quality.<id>` is one of that source's `qualities` ids, the lowest by default,
+and is passed to `stream_url(track, quality)`; it applies from the next track.
 
 ### Caching
 
@@ -121,7 +130,8 @@ applies from the next track.
   with the kept answer, the source is asked again when it is older than `FRESH` (or on `force`), and
   `show` runs again only if the answer changed, so `show` callbacks must be safe to run twice.
   `what` must be in `answers.READS`; a new read method of the source goes there. Kept in
-  `~/.cache/haltia-music/data.json` (latest `KEEP`); `reset()` on logout drops it and what is in flight.
+  `~/.cache/haltia-music/data-<source id>.json` (latest `KEEP`), one `Answers` per source;
+  `reset()` on logout drops that source's and what is in flight.
 - After a change on the service (a like), `forget()` the affected keys.
 - `Covers` decodes in worker pools (disk and network separate) and keeps `PIXBUFS` decoded covers in
   an LRU; the GTK thread never decodes images.
