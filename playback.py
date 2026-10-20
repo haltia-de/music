@@ -251,3 +251,107 @@ class Session:
     def _set_playing(self, on):
         self.playing = on
         self.events.playing(on)
+
+
+class Front:
+    """What plays, of either kind: the program's own Session, or a session a
+    source holds itself (Music Assistant's queue). The window and MPRIS talk
+    to it as to a Session. A list or a radio goes to the kind of its source;
+    the one that played before stops, and only the one playing is heard
+    from.
+
+    Front(sources, player, work, later, events): as for Session; a source
+    with session(events, work, player) holds what plays itself, and gets the
+    same player (one libmpv for all).
+    """
+
+    def __init__(self, sources, player, work, later, events):
+        self.sources, self.work, self.events = sources, work, events
+        self.own = Session(sources, player, work, later, self._told(lambda: self.own))
+        self.kinds = {}  # source id -> its session
+        self.active = self.own
+
+    def _told(self, kind):
+        front = self
+
+        class Told:
+            def __getattr__(self, name):
+                def tell(*args):
+                    if front.active is kind():
+                        getattr(front.events, name)(*args)
+                return tell
+
+        return Told()
+
+    def _player(self):
+        if self.own.player is None:
+            self.own.player = self.own.make_player()
+        return self.own.player
+
+    def _kind(self, track):
+        src = self.sources.get(track["source"])
+        if src is None or not hasattr(src, "session"):
+            return self.own
+        if src.id not in self.kinds:
+            made = []
+            self.kinds[src.id] = src.session(self._told(lambda: made[0]), self.work,
+                                             self._player)
+            made.append(self.kinds[src.id])
+        return self.kinds[src.id]
+
+    def _switch(self, kind):
+        if kind is self.active:
+            return
+        old, self.active = self.active, kind
+        for k in self.kinds.values():
+            k.active = k is kind
+        old.stop()
+
+    # --- what the window asks ---------------------------------------------------
+    def play_list(self, tracks, i):
+        if 0 <= i < len(tracks):
+            self._switch(self._kind(tracks[i]))
+            self.active.play_list(tracks, i)
+
+    def play_radio(self, radio, tracks, i):
+        if 0 <= i < len(tracks):
+            self._switch(self._kind(tracks[i]))
+            self.active.play_radio(radio, tracks, i)
+
+    def jump(self, i):
+        self.active.jump(i)
+
+    def next(self):
+        self.active.next()
+
+    def prev(self):
+        self.active.prev()
+
+    def toggle(self):
+        self.active.toggle()
+
+    def seek(self, sec):
+        self.active.seek(sec)
+
+    def stop(self):
+        self.active.stop()
+
+    # --- what the player says: it is the program's own session's ------------------
+    def ended(self, error=None):
+        self.own.ended(error)
+
+    def paused(self, on):
+        self.own.paused(on)
+
+    def timed(self, seconds):
+        self.own.timed(seconds)
+
+    # --- what plays -----------------------------------------------------------------
+    current = property(lambda self: self.active.current)
+    index = property(lambda self: self.active.index)
+    tracks = property(lambda self: self.active.tracks)
+    radio = property(lambda self: self.active.radio)
+    radio_src = property(lambda self: self.active.radio_src)
+    state = property(lambda self: self.active.state)
+    position = property(lambda self: self.active.position)
+    playing = property(lambda self: self.active.playing)

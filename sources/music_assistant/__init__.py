@@ -93,6 +93,12 @@ def found_servers(seconds=FIND_SECONDS):
 class MusicAssistant:
     id, label = items.SOURCE_ID, "Music Assistant"
     likes_list = LIKES
+    device_name = staticmethod(_name)
+
+    def session(self, events, work, player):
+        """What plays from here: the server's queue of this device (queue.py)."""
+        from .queue import Queue
+        return Queue(self, events, work, player)
 
     def __init__(self):
         self._client = None

@@ -269,5 +269,76 @@ class TwoSources(Case):
         self.assertEqual(self.player.what, "fake://low/2")
 
 
+class Held:
+    """A session a source holds itself: it records what it is asked."""
+
+    def __init__(self, events):
+        self.events, self.asked, self.active = events, [], False
+        self.current, self.index, self.tracks, self.radio, self.radio_src = None, -1, [], None, None
+        self.state, self.position, self.playing = "stopped", 0, False
+
+    def play_list(self, tracks, i):
+        self.asked.append(("play_list", i))
+        self.current = tracks[i]
+        self.events.changed(tracks[i])
+
+    def stop(self):
+        self.asked.append(("stop",))
+        self.current = None
+        self.events.changed(None)
+
+    def next(self):
+        self.asked.append(("next",))
+
+
+class Kinds(unittest.TestCase):
+    """A source that holds its queue plays through its own session."""
+
+    def setUp(self):
+        self.mine = fake.Source()
+        self.server = fake.Source()
+        self.server.id = "server"
+        self.made = []
+        self.server.session = lambda events, work, player: (
+            self.made.append(Held(events)) or self.made[-1])
+        self.player, self.events = FakePlayer(), fake.Events()
+        self.f = playback.Front(fake.Sources(self.mine, self.server), lambda: self.player,
+                                fake.Work(), fake.Later(), self.events)
+
+    def test_the_own_kind_by_default(self):
+        self.f.play_list([track(1)], 0)
+        self.assertEqual(self.player.what, "fake://low/1")
+        self.assertEqual(self.made, [])
+
+    def test_a_held_queue_plays_its_tracks_and_the_other_stops(self):
+        self.f.play_list([track(1)], 0)
+        theirs = dict(track(2), source="server")
+        self.f.play_list([theirs], 0)
+        held = self.made[0]
+        self.assertEqual(held.asked, [("play_list", 0)])
+        self.assertTrue(held.active)
+        self.assertFalse(self.player.playing)  # the own one stopped
+        self.assertIs(self.f.current, theirs)
+        self.f.next()
+        self.assertEqual(held.asked[-1], ("next",))
+        self.assertEqual(self.events.tracks[-1], theirs)
+
+    def test_only_the_one_playing_is_heard(self):
+        self.f.play_list([dict(track(2), source="server")], 0)
+        held = self.made[0]
+        self.f.play_list([track(1)], 0)
+        self.assertEqual(held.asked[-1], ("stop",))
+        told = len(self.events.tracks)
+        held.events.changed(dict(track(3), source="server"))  # it says something late
+        self.assertEqual(len(self.events.tracks), told)
+        self.assertEqual(self.f.current["id"], "1")
+
+    def test_one_player_for_all(self):
+        self.f.play_list([dict(track(2), source="server")], 0)
+        self.assertIs(self.f._player(), self.player)
+        self.f.play_list([track(1)], 0)
+        self.assertIs(self.f.own.player, self.player)
+
+
 if __name__ == "__main__":
     unittest.main()

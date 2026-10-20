@@ -291,7 +291,7 @@ class Music(Gtk.Application):
         events = SimpleNamespace(changed=self.on_track, grew=self.on_grew,
                                  playing=self.on_playing, time=self.on_time, failed=self.say)
         # The player keeps the machine awake while it plays, not paused.
-        self.session = playback.Session(
+        self.session = playback.Front(
             self.sources, lambda: sound.Player("Музыка", on_end=lambda: self.session.ended(),
                                            on_time=lambda s: self.session.timed(s),
                                            on_pause=lambda on: self.session.paused(on),
