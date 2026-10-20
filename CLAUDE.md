@@ -14,11 +14,10 @@ user folders only from `GLib.get_user_config_dir()`/`get_user_data_dir()`/`get_u
 and `requirements.txt` pins every Python library (for flatpak-pip-generator) at the versions the
 tablet runs; keep it in step with the APKBUILD's `depends` and `install.sh`'s wheels.
 
-Before 2.0 it was `b8k-music` / `io.github.trudenboy.Music` (ADR 0004 renamed it). Until 3.0 keep:
-the `b8k-music` command (a link), the hidden old `.desktop`, `provides`/`replaces="b8k-music"` in
-the APKBUILD, `paths.migrate_dirs("b8k-music", "haltia-music")` at start (it moves
-`~/.local/share` and `~/.cache` folders; `Settings` moves `~/.config/b8k/music.conf` itself), and
-`B8K_CACHE` as the fallback of `HALTIA_CACHE`. No «крупно» in names or descriptions.
+Before 2.0 it was `b8k-music` / `io.github.trudenboy.Music` (ADR 0004 renamed it); 3.0 dropped
+those names (`install.sh` only removes what an older install left). The metainfo's `<replaces>`
+and the `.desktop` file's `X-Flatpak-RenamedFrom` stay; `X-B8K-*` keys are the shell's, not old
+names. No «крупно» in names or descriptions.
 
 ## Commands
 
@@ -80,8 +79,19 @@ There is no build or linter. Checks available:
   to fill (`login_start`, `login_next`), and the settings card draws the step it is at. Every track carries `source`; playing and liking go to the track's
   own source, so a view keeps the source it shows (`view["src"]`). Яндекс comes first (`ORDER`).
   Before 2.4 there was Яндекс alone: `data.json` and `quality` move to its names once.
-- `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they share one event loop on a
-  daemon thread (`_Loop`) and every public method blocks on its result. Account (tokens) kept
+- `sources/music_assistant/` — Music Assistant (plan and ADR 0003/0004 in `docs/`), a package:
+  `client.py` (the server's websocket API: token sign-in, commands, events, reconnecting;
+  `sign_in` makes a year-long token from a name and password), `items.py` (MA media items as the
+  program's items, no network), `__init__.py` (`SOURCE`: the form sign-in, home rows from
+  `music/recommendations`, browse, lists, search, favourites as hearts; account, token and the
+  device's Sendspin key in `Vault`), `queue.py` (`Queue`, the other kind of `Session`: commands to
+  `player_queues/*`, state from the server's events), `sound.py` (this device as an MA player over
+  Sendspin through `/sendspin`: FLAC or PCM into the program's player through a pipe). Without
+  aiohttp the package has no `SOURCE` and is left out; its tests are skipped. Its tests run
+  against `tests/fake_ma.py`, a fake server on the sources' loop.
+- `sources/loop.py` — the asyncio loop the sources share (`run`, `start`, `call`).
+- `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they run on the sources' loop
+  (`loop.py`) and every public method blocks on its result. Account (tokens) kept
   by `vault.py` (`Vault`): in the Secret Service (libsecret; schema `io.github.haltia_de.Music`,
   attribute `account=yandex`), or, where no keyring answers (the tablet has none), in
   `~/.local/share/haltia-music/yandex.json`, mode 600. A file is the newest: it moves into the
@@ -141,7 +151,10 @@ and is passed to `stream_url(track, quality)`; it applies from the next track.
 
 ### Playback
 
-`self.session` (`playback.Session`) owns the queue, the radio, its growth, start/finish/skip
+`self.session` is `playback.Front`: it hands a list or a radio to the kind of `Session` its
+source plays through (a source with `session(events, work, player)` holds its own queue, as
+Music Assistant does), stops the other, passes on only the playing one's events, and gives all
+kinds the one player. The program's own kind, `playback.Session`, owns the queue, the radio, its growth, start/finish/skip
 feedback; `Music` only calls it (`play_list`, `play_radio`, `jump`, the bar's
 buttons) and draws its events (`on_track`, `on_grew`, `on_playing`, `on_time`, `say`). The player
 reports to it (`on_end` → `ended()`, `on_error` → `ended(text)`, `on_pause` → `paused`, `on_time` →

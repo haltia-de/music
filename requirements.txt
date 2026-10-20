@@ -14,6 +14,14 @@ aiofiles==25.1.0
 yarl==1.24.2
 requests[socks]==2.33.1
 typing-extensions==4.15.0
+# Music Assistant: the first four come as wheels from install.sh too
+aiosendspin==9.1.1
+cpace==0.1.0
+noiseprotocol==0.3.1
+mashumaro==3.23
+cryptography==47.0.0
+orjson==3.11.9
+zeroconf==0.147.2
 # what those need
 aiohappyeyeballs==2.6.1
 aiosignal==1.4.0
@@ -26,3 +34,5 @@ charset-normalizer==3.4.9
 urllib3==2.7.0
 certifi==2026.2.25
 PySocks==1.7.1
+cffi==2.0.0
+ifaddr==0.2.0

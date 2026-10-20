@@ -12,12 +12,16 @@ Architecture: all
 Depends: ${misc:Depends}, python3, python3-gi, gir1.2-gtk-3.0, gir1.2-secret-1,
  python3-haltia-kit (>= 2.1.0), python3-mpv, python3-aiohttp, python3-aiofiles,
  python3-yarl, python3-requests, python3-typing-extensions, python3-qrcode
-Description: Yandex Music with its radio, collection, charts and search
+Recommends: python3-cryptography, python3-orjson, python3-zeroconf
+Description: Yandex Music and Music Assistant, with radio, collections and search
  Музыка (Music) plays Яндекс Музыка: Моя волна and its modes, one's
  collection, the chart, new releases and picks, and finds tracks and
- playlists. It signs in by a QR code or a short code, keeps playing behind
- other windows, and shows what plays in the desktop's player controls. Part
- of Haltia, a calm touch desktop; it runs on any GTK desktop.
+ playlists. It also plays from a Music Assistant server of one's own, as one
+ of its players. It keeps playing behind other windows, and shows what
+ plays in the desktop's player controls. Part of Haltia, a calm touch
+ desktop; it runs on any GTK desktop.
  .
- The yandex-music and ya-passport-auth libraries, which the distribution
- lacks, come inside the package.
+ The yandex-music, ya-passport-auth, aiosendspin, cpace, noiseprotocol and
+ mashumaro libraries, which the distribution lacks, come inside the
+ package. Music Assistant needs the recommended packages (on Ubuntu 24.04,
+ which has no python3-orjson, use the Flatpak for it).

@@ -1,16 +1,14 @@
 # Maintainer: Mikhail Nevskiy <rensomail@gmail.com>
 pkgname=haltia-music
-pkgver=2.4.1
+pkgver=3.0.0
 pkgrel=0
-pkgdesc="Музыка: Яндекс Музыка with its radio, collection, charts and search (Haltia, GTK 3)"
+pkgdesc="Музыка: Яндекс Музыка and Music Assistant, with radio, collections and search (Haltia, GTK 3)"
 url="https://github.com/haltia-de/music"
-# b8k-music until 2.0: apk upgrade takes this for it.
-provides="b8k-music=$pkgver-r$pkgrel"
-replaces="b8k-music"
 arch="noarch"
 license="GPL-2.0-only"
-depends="python3 py3-gobject3 gtk+3.0 libsecret py3-haltia-kit py3-mpv mpv-libs py3-aiohttp py3-aiofiles py3-yarl py3-requests py3-typing-extensions py3-qrcode"
-# install.sh fetches the pinned yandex-music and ya-passport-auth wheels.
+depends="python3 py3-gobject3 gtk+3.0 libsecret py3-haltia-kit py3-mpv mpv-libs py3-aiohttp py3-aiofiles py3-yarl py3-requests py3-typing-extensions py3-qrcode py3-cryptography py3-orjson py3-zeroconf"
+# install.sh fetches the pinned wheels: yandex-music, ya-passport-auth, and
+# for Music Assistant aiosendspin, cpace, noiseprotocol, mashumaro.
 options="net"
 # The MPRIS tests run on a bus of their own.
 checkdepends="dbus"

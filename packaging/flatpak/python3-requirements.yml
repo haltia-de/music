@@ -1,7 +1,8 @@
 # The Python libraries of requirements.txt (but python-mpv, which comes
-# with haltia-kit), pure Python: aiohttp and PySocks from their source (aiohttp
-# without its C parts), the rest as their py3-none-any wheels. Written by
-# requirements.py; run it again when requirements.txt changes.
+# with haltia-kit): aiohttp and PySocks from their source (aiohttp without
+# its C parts), cryptography, cffi, orjson and zeroconf as x86_64 wheels
+# for the runtime's Python, the rest as their py3-none-any wheels. Written
+# by requirements.py; run it again when requirements.txt changes.
 name: python3-requirements
 buildsystem: simple
 build-options:
@@ -9,7 +10,7 @@ build-options:
     AIOHTTP_NO_EXTENSIONS: '1'
 build-commands:
   - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}"
-    --prefix=${FLATPAK_DEST} --no-build-isolation --no-deps yandex-music ya-passport-auth qrcode aiohttp aiofiles yarl requests typing-extensions aiohappyeyeballs aiosignal attrs frozenlist multidict propcache idna charset-normalizer urllib3 certifi PySocks
+    --prefix=${FLATPAK_DEST} --no-build-isolation --no-deps yandex-music ya-passport-auth qrcode aiohttp aiofiles yarl requests typing-extensions aiosendspin cpace noiseprotocol mashumaro cryptography orjson zeroconf aiohappyeyeballs aiosignal attrs frozenlist multidict propcache idna charset-normalizer urllib3 certifi PySocks cffi ifaddr
 sources:
   - type: file
     url: https://files.pythonhosted.org/packages/9a/06/b777ad29f3d5a8b6c7a4a337670569bf12e0b1f1975489a1041e8ed006af/yandex_music-3.2.1-py3-none-any.whl
@@ -35,6 +36,27 @@ sources:
   - type: file
     url: https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl
     sha256: f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
+  - type: file
+    url: https://files.pythonhosted.org/packages/f4/c8/e6bb6ece16ef74a3867543675a153cb09b10eb907025e8d77ac4db547bc4/aiosendspin-9.1.1-py3-none-any.whl
+    sha256: cb7227f70a8c6cfea450fb92ad26ed6fe3d86e883620700e2cde9372ad8c995b
+  - type: file
+    url: https://files.pythonhosted.org/packages/fa/e8/949c45844ad0d65d0112c2c4fa11cc8a7c4359fe2a20667e00c930860bef/cpace-0.1.0-py3-none-any.whl
+    sha256: 9fabb60a711a85934225be4081b3f5994e1ca4cd1335c5b9171770c8f1a2fda3
+  - type: file
+    url: https://files.pythonhosted.org/packages/9d/e1/76e4694201d67b93a6f1644b2588b4a3d965419fe189416e3496cf415db5/noiseprotocol-0.3.1-py3-none-any.whl
+    sha256: 2e1a603a38439636cf0ffd8b3e8b12cee27d368a28b41be7dbe568b2abb23111
+  - type: file
+    url: https://files.pythonhosted.org/packages/4e/eb/2c5e2b0df54c9c979d45bfa4820687ab24797fe1ad42d4fdfc0c8ece59f1/mashumaro-3.23-py3-none-any.whl
+    sha256: a671279ce93119d41c54adcd767753ae68adb32b9473de2f9d5d1720d2376231
+  - type: file
+    url: https://files.pythonhosted.org/packages/00/e3/b27be1a670a9b87f855d211cf0e1174a5d721216b7616bd52d8581d912ed/cryptography-47.0.0-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+    sha256: f5c15764f261394b22aef6b00252f5195f46f2ca300bec57149474e2538b31f8
+  - type: file
+    url: https://files.pythonhosted.org/packages/76/3e/c0b690253f0b82d86e99949af13533363acfb5432ecb5d53dd5b3bce9c34/orjson-3.11.9-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+    sha256: aaea64f3f467d22e70eeed68bdccb3bc4f83f650446c4a03c59f2cba28a108db
+  - type: file
+    url: https://files.pythonhosted.org/packages/16/d3/9b6fa4f94a5be0145730f998bdf44c642db159d7a7f2f9fb5a1ed4adce04/zeroconf-0.151.5-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+    sha256: 5846416ae2bddacb1bbb755233dd13c4bd15d94dfd0feb23a4b1abe1e2312302
   - type: file
     url: https://files.pythonhosted.org/packages/0f/15/5bf3b99495fb160b63f95972b81750f18f7f4e02ad051373b669d17d44f2/aiohappyeyeballs-2.6.1-py3-none-any.whl
     sha256: f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8
@@ -68,3 +90,9 @@ sources:
   - type: file
     url: https://files.pythonhosted.org/packages/bd/11/293dd436aea955d45fc4e8a35b6ae7270f5b8e00b53cf6c024c83b657a11/PySocks-1.7.1.tar.gz
     sha256: 3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0
+  - type: file
+    url: https://files.pythonhosted.org/packages/47/d9/d83e293854571c877a92da46fdec39158f8d7e68da75bf73581225d28e90/cffi-2.0.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+    sha256: afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775
+  - type: file
+    url: https://files.pythonhosted.org/packages/9c/1f/19ebc343cc71a7ffa78f17018535adc5cbdd87afb31d7c34874680148b32/ifaddr-0.2.0-py3-none-any.whl
+    sha256: 085e0305cfe6f16ab12d72e2024030f5d52674afad6911bb1eee207177b8a748

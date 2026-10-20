@@ -29,8 +29,6 @@ modules:
     buildsystem: simple
     build-commands:
       - HALTIA_WHEELS=no sh install.sh "" /app
-      # The names from before ADR 0004 are for the Haltia tablet only.
-      - rm -f /app/bin/b8k-music /app/share/applications/io.github.trudenboy.Music.desktop
     sources:
       - type: dir
         path: ../..

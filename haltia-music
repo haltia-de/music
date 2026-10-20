@@ -33,9 +33,10 @@ What plays is told to the desktop by MPRIS, so the Haltia shell marks the
 program's button and can pause or stop the music.
 
 Services are the sources package next to this file (or in
-PREFIX/lib/haltia-music): Яндекс Музыка now, others the same way. Playback
-is libmpv through haltia-kit, sound only. Before 2.0 the program was
-b8k-music: its folders move to the new name at the first start.
+PREFIX/lib/haltia-music): Яндекс Музыка, and Music Assistant, a server of
+one's own whose queue of this device plays here (playback.Front hands what
+plays to the kind of its service). Playback is libmpv through haltia-kit,
+sound only.
 """
 import hashlib
 import os
@@ -59,7 +60,7 @@ ON_HALTIA = "Haltia" in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Gtk", "3.0")
-from haltia_kit import dialogs, paths, sound  # noqa: E402
+from haltia_kit import dialogs, sound  # noqa: E402
 from haltia_kit.settings import Settings  # noqa: E402
 from gi.repository import Gdk, GdkPixbuf, Gtk, Pango  # noqa: E402
 
@@ -1163,6 +1164,4 @@ class Music(Gtk.Application):
 
 
 if __name__ == "__main__":
-    # b8k-music before 2.0: the login, the kept answers and covers move once.
-    paths.migrate_dirs("b8k-music", "haltia-music")
     sys.exit(Music().run(sys.argv))

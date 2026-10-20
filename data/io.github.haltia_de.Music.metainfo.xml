@@ -6,10 +6,10 @@
   <project_license>GPL-2.0-only</project_license>
   <name>Music</name>
   <name xml:lang="ru">Музыка</name>
-  <summary>Яндекс Музыка: radio, collection, charts and search</summary>
-  <summary xml:lang="ru">Яндекс Музыка: волна, коллекция, чарт и поиск</summary>
+  <summary>Яндекс Музыка and Music Assistant: radio, collections and search</summary>
+  <summary xml:lang="ru">Яндекс Музыка и Music Assistant: волна, коллекция и поиск</summary>
   <description>
-    <p xml:lang="ru">Яндекс Музыка просто и удобно для пальцев: Моя волна и её настроения, своя коллекция, чарт, новинки и подборки, поиск треков и плейлистов, отметки «Мне нравится». Музыка играет, пока окно открыто за другими программами.</p>
+    <p xml:lang="ru">Яндекс Музыка просто и удобно для пальцев: Моя волна и её настроения, своя коллекция, чарт, новинки и подборки, поиск треков и плейлистов, отметки «Мне нравится». Ещё она играет с собственного сервера Music Assistant как один из его проигрывателей. Музыка играет, пока окно открыто за другими программами.</p>
     <p>Touch-first and simple, part of the Haltia desktop, made for an older person's tablet; at home on any GTK desktop.</p>
   </description>
   <launchable type="desktop-id">io.github.haltia_de.Music.desktop</launchable>
@@ -18,6 +18,12 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="3.0.0" date="2026-10-20">
+      <description>
+        <p>Music Assistant is a second source: sign in to a server of your own in Settings → Sources, and Music plays its queue as one of its players, with its home page, browsing, search and favourites. With both sources on, a button in the header switches between them. The names from before 2.0 (the b8k-music command and the old program id) are gone.</p>
+        <p xml:lang="ru">Второй источник — Music Assistant: войдите в свой сервер в «Настройки → Источники», и Музыка будет играть его очередь как один из его проигрывателей, с его главной, обзором, поиском и избранным. Когда включены оба источника, кнопка в шапке переключает между ними. Старые имена до 2.0 (команда b8k-music и прежний id программы) убраны.</p>
+      </description>
+    </release>
     <release version="2.4.1" date="2026-10-20">
       <description>
         <p>The Liked tile on the home page is red again.</p>

@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Music
-Name[ru]=Музыка
-Comment=The old name of Музыка (io.github.haltia_de.Music), kept hidden until 3.0 so pins and links to it still start it
-Exec=haltia-music
-Icon=io.github.haltia_de.Music
-Terminal=false
-NoDisplay=true
