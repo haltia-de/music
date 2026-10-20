@@ -4,9 +4,9 @@ ya-passport-auth: a QR code scanned with the phone, or a short code entered
 at ya.ru/device (the OAuth device flow, whose refresh token renews the
 access silently), whichever is confirmed first.
 
-Both libraries are asyncio; they run on one event loop in a thread of
-their own, and every method here waits for its result, so the program
-calls them from worker threads like any blocking source.
+Both libraries are asyncio; they run on the sources' loop (loop.py), and
+every method here waits for its result, so the program calls them from
+worker threads like any blocking source.
 
 The first page and the folders follow the Yandex Music provider of Music
 Assistant: Моя волна and its modes, Для вас, the chart, new releases and
@@ -24,11 +24,12 @@ provider has.
 import asyncio
 import datetime
 import os
-import threading
 
 from gi.repository import GLib
 
 import vault
+
+from . import loop
 
 # GLib's, not ~: inside Flatpak the home is there but not to be read.
 ACCOUNT = os.path.join(GLib.get_user_data_dir(), "haltia-music", "yandex.json")
@@ -87,16 +88,6 @@ SEASONS = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: 
            6: "summer", 7: "summer", 8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}
 SEASON_NAMES = {"winter": "Зима", "spring": "Весна", "summer": "Лето", "autumn": "Осень"}
 
-
-class _Loop:
-    """One asyncio loop in a daemon thread; run(coro) waits for the result."""
-
-    def __init__(self):
-        self.loop = asyncio.new_event_loop()
-        threading.Thread(target=self.loop.run_forever, daemon=True).start()
-
-    def run(self, coro, timeout=120):
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
 
 
 def _cover(uri):
@@ -187,7 +178,6 @@ class Yandex:
     ]
 
     def __init__(self):
-        self._loop = None
         self._client = None
         self._connecting = None  # the client being made, for all who need it
         self._device = None  # the device-code login in progress
@@ -205,10 +195,9 @@ class Yandex:
     def _save(data):
         VAULT.save(data)
 
-    def _run(self, coro, timeout=120):
-        if self._loop is None:
-            self._loop = _Loop()
-        return self._loop.run(coro, timeout)
+    @staticmethod
+    def _run(coro, timeout=120):
+        return loop.run(coro, timeout)
 
     def logged_in(self):
         saved = self._saved()
