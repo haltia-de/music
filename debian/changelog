@@ -1,3 +1,9 @@
+haltia-music (3.0.1) unstable; urgency=medium
+
+  * Music Assistant is experimental: off until switched on in the settings.
+
+ -- Haltia <rensomail@gmail.com>  Tue, 20 Oct 2026 16:45:00 +0300
+
 haltia-music (3.0.0) unstable; urgency=medium
 
   * Music Assistant is a second source: Music plays its server's queue as

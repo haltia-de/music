@@ -1,6 +1,6 @@
 # Maintainer: Mikhail Nevskiy <rensomail@gmail.com>
 pkgname=haltia-music
-pkgver=3.0.0
+pkgver=3.0.1
 pkgrel=0
 pkgdesc="Музыка: Яндекс Музыка and Music Assistant, with radio, collections and search (Haltia, GTK 3)"
 url="https://github.com/haltia-de/music"

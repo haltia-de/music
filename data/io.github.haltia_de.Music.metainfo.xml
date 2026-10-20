@@ -18,6 +18,12 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="3.0.1" date="2026-10-20">
+      <description>
+        <p>Music Assistant is experimental for now and off until switched on in Settings → Sources; if it was set up already, there is no need to sign in again, only to switch it on.</p>
+        <p xml:lang="ru">Music Assistant пока экспериментальный и выключен, пока его не включить в «Настройки → Источники»; если он уже был настроен, войти заново не нужно, только включить.</p>
+      </description>
+    </release>
     <release version="3.0.0" date="2026-10-20">
       <description>
         <p>Music Assistant is a second source: sign in to a server of your own in Settings → Sources, and Music plays its queue as one of its players, with its home page, browsing, search and favourites. With both sources on, a button in the header switches between them. The names from before 2.0 (the b8k-music command and the old program id) are gone.</p>

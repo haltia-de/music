@@ -1,5 +1,15 @@
 # Что нового · What's new
 
+## 3.0.1 (2026-10-20)
+
+### Русский
+
+Music Assistant пока экспериментальный и выключен, пока его не включить в «Настройки → Источники»; если он уже был настроен, войти заново не нужно, только включить.
+
+### English
+
+Music Assistant is experimental for now and off until switched on in Settings → Sources; if it was set up already, there is no need to sign in again, only to switch it on.
+
 ## 3.0.0 (2026-10-20)
 
 ### Русский
