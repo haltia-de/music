@@ -28,8 +28,8 @@ class Case(unittest.IsolatedAsyncioTestCase):
             await self.c.close()
         await self.server.stop()
 
-    async def connect(self, token=fake_ma.TOKEN):
-        self.c = client.Client(self.server.url, token,
+    async def connect(self, token=None):
+        self.c = client.Client(self.server.url, token or fake_ma.TOKEN,
                                lambda *e: self.events.append(e), self.states.append)
         await self.c.start()
         return self.c
@@ -104,6 +104,7 @@ class SignIn(Case):
             await client.sign_in("http://127.0.0.1:9", "кот", "верный", "Музыка")
 
 
+@unittest.skipUnless(aiohttp, "no aiohttp")
 class Address(unittest.TestCase):
     def test_ws_url(self):
         self.assertEqual(client.ws_url("https://ma.example.org/"), "wss://ma.example.org/ws")
