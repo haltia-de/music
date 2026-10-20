@@ -169,6 +169,8 @@ window taller than the room the on-screen keyboard leaves and hides the top row 
 ## Decisions
 
 `docs/adr/` records what was weighed and turned down; read it before proposing a restructuring.
+`docs/plan-music-assistant.md` is the agreed plan for several sources (Music Assistant second):
+read it before touching how sources, sign-in or `Session` are shaped.
 
 ## Conventions
 
