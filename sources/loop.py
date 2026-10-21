@@ -5,12 +5,14 @@ the first time a source needs it. Sources whose libraries are asyncio
 from the program's worker threads; long-lived work (a server's connection)
 lives on it too.
 
-run(coro, timeout=120)  waits for coro's result; raises what it raised
+run(coro, timeout=120)  waits for coro's result; raises what it raised,
+                        or TimeoutError after timeout, coro cancelled
 start(coro)             runs coro on the loop and does not wait: a
                         concurrent.futures.Future
 call(func, *args)       func(*args) on the loop's thread, soon
 """
 import asyncio
+import concurrent.futures
 import threading
 
 _loop = None
@@ -27,7 +29,12 @@ def _get():
 
 
 def run(coro, timeout=120):
-    return asyncio.run_coroutine_threadsafe(coro, _get()).result(timeout)
+    future = asyncio.run_coroutine_threadsafe(coro, _get())
+    try:
+        return future.result(timeout)
+    except concurrent.futures.TimeoutError:
+        future.cancel()  # nobody waits for it now
+        raise
 
 
 def start(coro):

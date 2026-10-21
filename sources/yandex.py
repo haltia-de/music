@@ -180,6 +180,7 @@ class Yandex:
     def __init__(self):
         self._client = None
         self._connecting = None  # the client being made, for all who need it
+        self._expired = False  # the music token was refused: renewed on connect
         self._device = None  # the device-code login in progress
         self._qr = None  # the QR login in progress: (PassportClient, QrSession)
         self._radio = {}  # radio id -> {"session", "batch"} of its rotor session
@@ -198,6 +199,24 @@ class Yandex:
     @staticmethod
     def _run(coro, timeout=120):
         return loop.run(coro, timeout)
+
+    def _call(self, make, timeout=120):
+        """make()'s result; when the service no longer takes the token
+        (revoked, run out), a new one is got and make() tried once more."""
+        from yandex_music.exceptions import UnauthorizedError
+
+        before = self._client
+        try:
+            return self._run(make(), timeout)
+        except UnauthorizedError:
+            self._run(self._expire(before))
+            return self._run(make(), timeout)
+
+    async def _expire(self, client):
+        """The token of client was refused: the next connect renews it,
+        once however many saw it refused."""
+        if self._client is client or client is None:
+            self._client, self._expired = None, True
 
     def logged_in(self):
         saved = self._saved()
@@ -346,8 +365,9 @@ class Yandex:
         saved = self._saved()
         if not saved:
             raise RuntimeError("not signed in")
-        if not saved.get("music_token"):
+        if not saved.get("music_token") or self._expired:
             saved = await self._renew(saved)
+            self._expired = False
         try:
             self._client = await ClientAsync(saved["music_token"], report_unknown_fields=False).init()
         except UnauthorizedError:
@@ -382,7 +402,7 @@ class Yandex:
         if row_id == "wave":
             return self._waves()
         if row_id == "mine":
-            return [_item("list", self.likes_list, "Мне нравится", glyph="♥")] + self._run(self._mine())
+            return [_item("list", self.likes_list, "Мне нравится", glyph="♥")] + self._call(self._mine)
         if row_id == "chart":
             return self.tracks("chart")[:ROW_MAX]
         return self.browse(row_id)[:ROW_MAX]
@@ -490,7 +510,7 @@ class Yandex:
                         + _some(map(_album, res.albums if res else [])))
             return []
 
-        return self._run(get())
+        return self._call(get)
 
     def tracks(self, collection_id):
         async def get():
@@ -520,7 +540,7 @@ class Yandex:
                 return []
             return _tracks(await api.tracks(ids))
 
-        return self._run(get())
+        return self._call(get)
 
     def radio_next(self, collection_id, last_track):
         async def get():
@@ -548,7 +568,7 @@ class Yandex:
                 state["batch"] = res.batch_id
             return _tracks(s.track for s in res.sequence or [])
 
-        return self._run(get())
+        return self._call(get)
 
     def search(self, query):
         """Tracks and playlists. Playlists come first when the service takes
@@ -564,7 +584,7 @@ class Yandex:
                 return playlists + tracks
             return tracks[:SEARCH_FIRST] + playlists + tracks[SEARCH_FIRST:]
 
-        return self._run(get())
+        return self._call(get)
 
     def stream_url(self, track, quality="low"):
         quality, codecs = QUALITY.get(quality, QUALITY["low"])
@@ -579,7 +599,7 @@ class Yandex:
                 raise RuntimeError("the stream is encrypted")
             return info.download_info.url
 
-        return self._run(get())
+        return self._call(get)
 
     # --- what one likes ------------------------------------------------------
     def liked(self):
@@ -588,7 +608,7 @@ class Yandex:
             likes = await api.users_likes_tracks()
             return {str(t.id) for t in (likes.tracks if likes else [])}
 
-        return self._run(get())
+        return self._call(get)
 
     def like(self, track, on):
         async def send():
@@ -598,7 +618,7 @@ class Yandex:
             else:
                 await api.users_likes_tracks_remove(track["id"])
 
-        self._run(send())
+        self._call(send)
 
     @staticmethod
     async def _event(api, state, kind, track=None, seconds=None):
@@ -623,7 +643,7 @@ class Yandex:
             await self._event(api, state, kind, track, None if event == "start" else seconds)
 
         try:
-            self._run(send())
+            self._call(send)
         except Exception:
             pass
 

@@ -172,6 +172,14 @@ class Source(unittest.TestCase):
         self.assertEqual([(i["kind"], i["id"]) for i in found],
                          [("list", ma.LIKES), ("folder", YM + "://")])
 
+    def test_a_server_restarting_while_signing_in(self):
+        self.sign_in(token=fake_ma.TOKEN)
+        self.server.answers["music/recommendations"] = []
+        self.server.breaks = 1
+        with self.assertRaises(ConnectionError):
+            self.src.home()
+        self.assertEqual(self.src.home(), [])
+
     def test_signing_out_forgets(self):
         self.sign_in(token=fake_ma.TOKEN)
         self.src.logout()

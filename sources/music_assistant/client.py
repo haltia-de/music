@@ -9,11 +9,13 @@ Client(url, token, event=None, state=None, locale="ru_RU")
             each event the server sends (it sends them all once signed in)
   state(on) the connection came up (True) or went down (False)
 
-await start()       connects, and keeps connecting after a drop (RETRY,
-                    each wait longer, to RETRY_MAX) until close(); returns
-                    once the first try is over, raising what kept it from
-                    signing in (Refused for a token the server does not
-                    take: then it does not try again)
+await start()       connects, and keeps connecting after a drop or a failed
+                    try, whatever broke it (RETRY, each wait longer, to
+                    RETRY_MAX) until close(); returns once the first try
+                    is over, raising what kept it from signing in
+                    (Refused for a token the server does not take: then it
+                    does not try again; ConnectionError for anything else,
+                    or when the first try takes over START seconds)
 await call(command, timeout=TIMEOUT, **args)
                     the result (partial results joined); raises Error with
                     the server's code and words, or ConnectionError when
@@ -35,6 +37,7 @@ import aiohttp
 RETRY = 1  # seconds before connecting again after a drop, doubled up to
 RETRY_MAX = 30
 TIMEOUT = 60  # seconds a command may take
+START = 30  # seconds the first try to connect and sign in may take
 
 
 class Error(Exception):
@@ -74,7 +77,10 @@ class Client:
         first = asyncio.get_running_loop().create_future()
         self._closing = False
         self._task = asyncio.ensure_future(self._run(first))
-        await first
+        try:
+            await asyncio.wait_for(first, START)
+        except asyncio.TimeoutError:
+            raise ConnectionError("the server does not answer")
 
     async def _run(self, first):
         wait = RETRY
@@ -85,14 +91,17 @@ class Client:
                 if not first.done():
                     first.set_exception(exc)
                 return
-            except (aiohttp.ClientError, OSError, asyncio.TimeoutError, Error) as exc:
+            except Exception as exc:  # the server went away while signing in, or worse
                 if not first.done():
                     first.set_exception(ConnectionError(str(exc) or "no connection"))
             else:
                 wait = RETRY
                 if not first.done():
                     first.set_result(None)
-                await self._read()
+                try:
+                    await self._read()
+                except Exception:
+                    await self._ws.close()  # something it sent broke the reading
             if self._closing:
                 break
             await asyncio.sleep(wait)

@@ -63,6 +63,13 @@ gi.require_version("Gtk", "3.0")
 from haltia_kit import dialogs, sound  # noqa: E402
 from haltia_kit.settings import Settings  # noqa: E402
 from gi.repository import Gdk, GdkPixbuf, Gtk, Pango  # noqa: E402
+try:
+    # The kit decodes pictures with Pillow in a reader process of its own,
+    # with a pixel limit; no GdkPixbuf loader (glycin) runs here.
+    from haltia_kit import pictures as _pictures  # noqa: E402,F401
+    from haltia_kit.photos import pixbuf_of  # noqa: E402
+except ImportError:  # a kit before that
+    pixbuf_of = None
 
 # The modules: next to the program in a checkout, else PREFIX/share/haltia-music
 # (Debian) or PREFIX/lib/haltia-music (install.sh, Alpine, Flatpak).
@@ -78,7 +85,10 @@ import sources  # noqa: E402
 CACHE = os.path.join(GLib.get_user_cache_dir(), "haltia-music")
 PIXBUFS = 400  # decoded covers kept in memory
 COVER_MAX = 4 * 1024 * 1024  # bytes of a cover read, at most
-UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
+COVERS_MAX = 100 * 1024 * 1024  # bytes of covers kept on disk, at most
+PRUNE_EVERY = 50  # covers fetched between two prunings of the disk's
+ROWS = 40  # rows of a list built at once; the rest follow while the window is idle
+UA ="Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
 CARD = 160  # the cover of a card on the home page
 class Player(sound.Player):
     """The kit's player, with mpv options for one file: Music Assistant's
@@ -228,16 +238,23 @@ def qr_code(text, size):
 
 
 class Covers:
-    """Album covers: files on disk, decoded ones in memory. Fetching and
-    decoding happen in workers, so the window never waits for them."""
+    """Album covers: files on disk (COVERS_MAX bytes, the least used let go
+    first), decoded ones in memory. Fetching and decoding happen in
+    workers, so the window never waits for them; a cover asked for by
+    several images at once is fetched once, and one that no image waits
+    for any more (its page is gone) is not fetched or decoded."""
 
     def __init__(self):
         self.disk = ThreadPoolExecutor(max_workers=2)
         self.net = ThreadPoolExecutor(max_workers=3)
         self.mem = OrderedDict()  # (url, size) -> pixbuf, the latest used last
+        self.jobs = {}  # (url, size) -> [token, future, the images waiting]
+        self.fetched = 0
         os.makedirs(CACHE, exist_ok=True)
+        self.disk.submit(self.prune)
 
     def get(self, url, image, size):
+        self.forget(image)
         if not url:
             return
         key = (url, size)
@@ -246,9 +263,36 @@ class Covers:
             self.mem.move_to_end(key)
             image.set_from_pixbuf(pixbuf)
             return
-        path = self.path(url)
-        pool = self.disk if os.path.exists(path) else self.net
-        pool.submit(self._load, url, path, key, image)
+        if not hasattr(image, "cover_key"):
+            image.connect("destroy", self.forget)
+        image.cover_key = key
+        job = self.jobs.get(key)
+        if job is None:
+            token = object()
+            path = self.path(url)
+            pool = self.disk if os.path.exists(path) else self.net
+            job = self.jobs[key] = [token, None, []]
+            job[1] = pool.submit(self._load, url, path, key, token)
+        job[2].append(image)
+
+    def forget(self, image):
+        """The image waits for no cover now (another asked, or it is gone)."""
+        key = getattr(image, "cover_key", None)
+        if key is None:
+            return
+        image.cover_key = None
+        job = self.jobs.get(key)
+        if job is None or image not in job[2]:
+            return
+        job[2].remove(image)
+        if not job[2]:
+            del self.jobs[key]
+            job[1].cancel()
+
+    def _wanted(self, key, token):
+        """Some image still waits for this job's cover (from a worker)."""
+        job = self.jobs.get(key)
+        return job is not None and job[0] is token
 
     @staticmethod
     def path(url):
@@ -260,30 +304,80 @@ class Covers:
             return GLib.filename_to_uri(self.path(url), None)
         return None
 
-    def _load(self, url, path, key, image):
-        if not os.path.exists(path):
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": UA})
-                with urllib.request.urlopen(req, timeout=20) as resp:
-                    data = resp.read(COVER_MAX)
-                with open(path + ".new", "wb") as fh:
-                    fh.write(data)
-                os.replace(path + ".new", path)
-            except OSError:
-                return
+    def _load(self, url, path, key, token):
+        pixbuf = None
         try:
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, key[1], key[1], True)
-        except GLib.Error:
-            return
-        GLib.idle_add(self._show, key, pixbuf, image)
+            if os.path.exists(path):
+                os.utime(path)  # used now: kept the longest
+            elif self._wanted(key, token):
+                self._fetch(url, path)
+            if self._wanted(key, token):
+                pixbuf = decode(path, key[1])
+        except (OSError, ValueError, GLib.Error):
+            pass
+        GLib.idle_add(self._show, key, token, pixbuf)
 
-    def _show(self, key, pixbuf, image):
-        self.mem[key] = pixbuf
-        self.mem.move_to_end(key)
-        while len(self.mem) > PIXBUFS:
-            self.mem.popitem(last=False)
-        image.set_from_pixbuf(pixbuf)
+    def _fetch(self, url, path):
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = resp.read(COVER_MAX)
+        new = "%s.%d.new" % (path, threading.get_ident())
+        with open(new, "wb") as fh:
+            fh.write(data)
+        os.replace(new, path)
+        self.fetched += 1
+        if self.fetched % PRUNE_EVERY == 0:
+            self.disk.submit(self.prune)
+
+    @staticmethod
+    def prune():
+        """The covers on disk within COVERS_MAX bytes: the least recently
+        used go first."""
+        found = []
+        try:
+            for entry in os.scandir(CACHE):
+                if entry.name.endswith(".jpg") and entry.is_file():
+                    st = entry.stat()
+                    found.append((st.st_mtime, st.st_size, entry.path))
+        except OSError:
+            return
+        total = sum(size for _m, size, _p in found)
+        for _m, size, path in sorted(found):
+            if total <= COVERS_MAX:
+                break
+            try:
+                os.remove(path)
+                total -= size
+            except OSError:
+                pass
+
+    def _show(self, key, token, pixbuf):
+        if pixbuf is not None:
+            self.mem[key] = pixbuf
+            self.mem.move_to_end(key)
+            while len(self.mem) > PIXBUFS:
+                self.mem.popitem(last=False)
+        job = self.jobs.get(key)
+        if job is not None and job[0] is token:
+            del self.jobs[key]
+            for image in job[2]:
+                image.cover_key = None
+                if pixbuf is not None:
+                    image.set_from_pixbuf(pixbuf)
         return False
+
+
+def decode(path, size):
+    """The picture at path fitted into size × size, from a worker thread."""
+    if pixbuf_of is None:
+        return GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+    pixbuf = pixbuf_of(path, box=(size, size))  # never made larger
+    w, h = pixbuf.get_width(), pixbuf.get_height()
+    if max(w, h) < size:
+        k = size / max(w, h)
+        pixbuf = pixbuf.scale_simple(max(1, round(w * k)), max(1, round(h * k)),
+                                     GdkPixbuf.InterpType.BILINEAR)
+    return pixbuf
 
 
 class Music(Gtk.Application):
@@ -651,6 +745,11 @@ class Music(Gtk.Application):
 
     def focus(self, view, track_id):
         """Scroll the page to the track and mark it, once it is laid out."""
+        at = next((i for i, t in enumerate(view["shown"])
+                   if kind(t) == "track" and t["id"] == track_id), None)
+        while (at is not None and view.get("alive") and view.get("waiting")
+               and view["waiting"][0][0] <= at):
+            self.build_rows(view)  # its row now, not when the window is idle
         rows = [r for r in view["list"].get_children()
                 if kind(view["shown"][r.track_index]) == "track"
                 and view["shown"][r.track_index]["id"] == track_id]
@@ -948,6 +1047,9 @@ class Music(Gtk.Application):
     def fill(self, view, items):
         view["shown"] = items
         view["hearts"] = []
+        if view.get("building"):
+            GLib.source_remove(view["building"])
+        view["building"], view["waiting"] = None, []
         clear(view["list"])
         self.add_rows(view, items, 0)
         if view["play"] is not None:
@@ -960,40 +1062,62 @@ class Music(Gtk.Application):
         self.mark_playing(view)
 
     def add_rows(self, view, items, first):
-        """Rows for items, the first of them shown[first]."""
-        lst = view["list"]
-        for i, t in enumerate(items, first):
-            row = Gtk.ListBoxRow()
-            row.track_index = i
-            box = Gtk.Box(spacing=16)
-            box.pack_start(self.cover(t, 64, 28, view.get("src")), False, False, 0)
-            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            text.set_valign(Gtk.Align.CENTER)
-            ttl = styled(Gtk.Label(label=t["title"], xalign=0), "ttl")
-            ttl.set_ellipsize(Pango.EllipsizeMode.END)
-            text.pack_start(ttl, False, False, 0)
-            sub_text = t.get("artist") if kind(t) == "track" else t.get("subtitle")
-            if sub_text:
-                sub = styled(Gtk.Label(label=sub_text, xalign=0), "sub")
-                sub.set_ellipsize(Pango.EllipsizeMode.END)
-                text.pack_start(sub, False, False, 0)
-            box.pack_start(text, True, True, 0)
-            if kind(t) == "track":
-                dur = styled(Gtk.Label(label=mmss(t["duration"]) if t.get("duration")
-                                       else ""), "sub")
-                box.pack_start(dur, False, False, 0)
-                if self.likes_of(t).able:
-                    heart = styled(Gtk.Button(), "heart")
-                    heart.set_valign(Gtk.Align.CENTER)
-                    heart.connect("clicked", lambda _b, tr=t: self.likes_of(tr).toggle(tr))
-                    view["hearts"].append((heart, t))
-                    box.pack_start(heart, False, False, 0)
-            else:
-                more = styled(Gtk.Label(label="▶" if kind(t) == "radio" else "›"), "more")
-                box.pack_start(more, False, False, 8)
-            row.add(box)
-            lst.add(row)
-        lst.show_all()
+        """Rows for items, the first of them shown[first]: ROWS at once, the
+        rest while the window is idle, so a long list does not hold it."""
+        view["waiting"] = view.get("waiting", []) + list(enumerate(items, first))
+        if not view.get("building"):
+            self.build_rows(view)
+            if view["waiting"]:
+                view["building"] = GLib.idle_add(self.build_rows, view)
+
+    def build_rows(self, view):
+        """ROWS of the rows waiting; True while more wait (an idle source)."""
+        if not view.get("alive"):
+            return False
+        built, view["waiting"] = view["waiting"][:ROWS], view["waiting"][ROWS:]
+        for i, t in built:
+            self.add_row(view, i, t)
+        view["list"].show_all()
+        if built and view.get("building"):  # marked as the first ones were
+            self.update_hearts(view)
+            self.mark_playing(view)
+        if view["waiting"]:
+            return True
+        view["building"] = None
+        return False
+
+    def add_row(self, view, i, t):
+        """The row of t, shown[i]."""
+        row = Gtk.ListBoxRow()
+        row.track_index = i
+        box = Gtk.Box(spacing=16)
+        box.pack_start(self.cover(t, 64, 28, view.get("src")), False, False, 0)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        text.set_valign(Gtk.Align.CENTER)
+        ttl = styled(Gtk.Label(label=t["title"], xalign=0), "ttl")
+        ttl.set_ellipsize(Pango.EllipsizeMode.END)
+        text.pack_start(ttl, False, False, 0)
+        sub_text = t.get("artist") if kind(t) == "track" else t.get("subtitle")
+        if sub_text:
+            sub = styled(Gtk.Label(label=sub_text, xalign=0), "sub")
+            sub.set_ellipsize(Pango.EllipsizeMode.END)
+            text.pack_start(sub, False, False, 0)
+        box.pack_start(text, True, True, 0)
+        if kind(t) == "track":
+            dur = styled(Gtk.Label(label=mmss(t["duration"]) if t.get("duration")
+                                   else ""), "sub")
+            box.pack_start(dur, False, False, 0)
+            if self.likes_of(t).able:
+                heart = styled(Gtk.Button(), "heart")
+                heart.set_valign(Gtk.Align.CENTER)
+                heart.connect("clicked", lambda _b, tr=t: self.likes_of(tr).toggle(tr))
+                view["hearts"].append((heart, t))
+                box.pack_start(heart, False, False, 0)
+        else:
+            more = styled(Gtk.Label(label="▶" if kind(t) == "radio" else "›"), "more")
+            box.pack_start(more, False, False, 8)
+        row.add(box)
+        view["list"].add(row)
 
     def radio_on(self, view):
         return (view["kind"] == "radio" and self.session.radio == view.get("id")
