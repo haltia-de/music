@@ -117,13 +117,15 @@ class Pipe:
 
     def drop(self):
         """The pipe closes after what is being written, the rest let go."""
+        gone = 0
         try:
             while True:
-                self.chunks.get_nowait()
+                data = self.chunks.get_nowait()
+                gone += len(data) if data else 0
         except queue.Empty:
             pass
         with self.lock:
-            self.queued = 0
+            self.queued -= gone  # what is being written counts itself off
         self.chunks.put(None)
 
 

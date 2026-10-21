@@ -177,24 +177,25 @@ class Queue:
         if self.sound is None:
             if self._sounding is None:
                 self._sounding = asyncio.ensure_future(self._start_sound())
-            try:
-                await self._sounding
-            finally:
-                self._sounding = None
+            # One command giving up does not give up for the others.
+            await asyncio.shield(self._sounding)
         await self._known()
 
     async def _start_sound(self):
         """The Sendspin player, kept only once it is up: one that failed is
         closed, and the next command tries anew."""
-        saved = self.src._saved() or {}
-        sound = Sound(saved["url"], saved["token"], self.src.key(),
-                      self.src.device_name(), self._player,
-                      state=self._sound_state, allowed=lambda: self.active)
         try:
-            await sound.start()
-        except BaseException:
-            await sound.close()
-            raise
+            saved = self.src._saved() or {}
+            sound = Sound(saved["url"], saved["token"], self.src.key(),
+                          self.src.device_name(), self._player,
+                          state=self._sound_state, allowed=lambda: self.active)
+            try:
+                await sound.start()
+            except BaseException:
+                await sound.close()
+                raise
+        finally:
+            self._sounding = None
         self.sound = sound
 
     async def _known(self):

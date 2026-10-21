@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
+import asyncio
 import os
 import sys
 import tempfile
@@ -124,6 +125,18 @@ class Source(unittest.TestCase):
         self.assertTrue(self.sign_in(token=fake_ma.TOKEN))
         with self.assertRaises(PermissionError):
             self.sign_in(token="чужой")
+
+    def test_one_caller_giving_up_does_not_cancel_the_others(self):
+        self.assertTrue(self.sign_in(token=fake_ma.TOKEN))
+        loop.run(self.src._drop())
+
+        async def two():
+            first = asyncio.ensure_future(self.src.api())
+            second = asyncio.ensure_future(self.src.api())
+            await asyncio.sleep(0)
+            first.cancel()
+            return await second
+        self.assertIsNotNone(loop.run(two()))
 
     def test_no_server(self):
         with self.assertRaises(ConnectionError):

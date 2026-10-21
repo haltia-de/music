@@ -128,5 +128,15 @@ class Disk(Case):
                          ["2.jpg", "3.jpg", "data-yandex.json"])
 
 
+class Decoding(unittest.TestCase):
+    def test_an_older_kit_shows_no_cover_rather_than_use_gdkpixbuf(self):
+        func = next(node for node in TREE.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "decode")
+        loaders = SimpleNamespace()  # any use of GdkPixbuf fails
+        ns = {"pixbuf_of": None, "GdkPixbuf": loaders}
+        exec(compile(ast.Module(body=[func], type_ignores=[]), "haltia-music", "exec"), ns)
+        self.assertIsNone(ns["decode"]("/no/such.jpg", 64))
+
+
 if __name__ == "__main__":
     unittest.main()

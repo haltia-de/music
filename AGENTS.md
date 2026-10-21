@@ -148,7 +148,7 @@ and is passed to `stream_url(track, quality)`; it applies from the next track.
 - `Covers` decodes in worker pools (disk and network separate) and keeps `PIXBUFS` decoded covers in
   an LRU; the GTK thread never decodes images. Decoding is the kit's (`photos.pixbuf_of`: Pillow
   in its reader process, with a pixel limit; GdkPixbuf's loaders, glycin on Alpine, froze Видео),
-  GdkPixbuf only with a kit that lacks it. A cover is fetched once however many images wait for it,
+  never GdkPixbuf's: with a kit that lacks it there are no covers. A cover is fetched once however many images wait for it,
   not at all once none does (an image's `destroy` drops it), and the files stay under `COVERS_MAX`.
 - A list builds `ROWS` rows at once and the rest from an idle source (`add_rows`, `build_rows`).
 - In `sources/yandex.py`, `_api()` shares one connect between concurrent callers; keep new calls

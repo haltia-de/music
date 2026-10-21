@@ -88,7 +88,7 @@ COVER_MAX = 4 * 1024 * 1024  # bytes of a cover read, at most
 COVERS_MAX = 100 * 1024 * 1024  # bytes of covers kept on disk, at most
 PRUNE_EVERY = 50  # covers fetched between two prunings of the disk's
 ROWS = 40  # rows of a list built at once; the rest follow while the window is idle
-UA ="Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
+UA = "Mozilla/5.0 (X11; Linux armv7l; rv:151.0) Gecko/20100101 Firefox/151.0"
 CARD = 160  # the cover of a card on the home page
 class Player(sound.Player):
     """The kit's player, with mpv options for one file: Music Assistant's
@@ -368,9 +368,10 @@ class Covers:
 
 
 def decode(path, size):
-    """The picture at path fitted into size × size, from a worker thread."""
-    if pixbuf_of is None:
-        return GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+    """The picture at path fitted into size × size, from a worker thread;
+    None with a kit that cannot decode it."""
+    if pixbuf_of is None:  # an older kit: no cover rather than GdkPixbuf's loaders
+        return None
     pixbuf = pixbuf_of(path, box=(size, size))  # never made larger
     w, h = pixbuf.get_width(), pixbuf.get_height()
     if max(w, h) < size:

@@ -68,6 +68,19 @@ class Pipe(unittest.TestCase):
             os.close(read)
             pipe.drop()
 
+    def test_what_is_dropped_is_counted_off(self):
+        played = []
+        player = SimpleNamespace(play=lambda what, **_o: played.append(what))
+        pipe = sound.Pipe(lambda: player, {})
+        read = int(played[0].split("://")[1])
+        with os.fdopen(read, "rb") as fh:
+            while pipe.write(b"x" * 1000):
+                pass
+            pipe.drop()
+            while fh.read(65536):  # the chunk being written, then the end
+                pass
+        self.assertEqual(pipe.queued, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

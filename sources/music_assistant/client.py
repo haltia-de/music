@@ -100,8 +100,11 @@ class Client:
                     first.set_result(None)
                 try:
                     await self._read()
-                except Exception:
-                    await self._ws.close()  # something it sent broke the reading
+                except Exception:  # something it sent broke the reading
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
             if self._closing:
                 break
             await asyncio.sleep(wait)
