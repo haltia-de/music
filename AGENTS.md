@@ -26,7 +26,7 @@ There is no build or linter. Checks available:
 - `python3 -m unittest` — tests in `tests/` (playback, answers, likes, the source contract;
   stand-ins from `tests/fake.py` and `haltia_kit.testing.FakePlayer`; no GTK, mpv or network).
   One test: `python3 -m unittest tests.test_playback.Radio`. Needs `haltia_kit` importable
-  (`PYTHONPATH=/mnt/data/Projects/b8k-compat`, the kit's checkout). Not installed; the APKBUILD runs them.
+  (`PYTHONPATH=/mnt/data/Projects/haltia-de/kit`, the kit's checkout). Not installed; the APKBUILD runs them.
 - `python3 -m py_compile haltia-music *.py sources/*.py` — syntax check.
 - `python3 haltia-music` — run from the checkout (finds `sources/` next to itself). Needs
   PyGObject, haltia-kit, python-mpv/libmpv, qrcode, libsecret (optional), and `yandex_music` + `ya_passport_auth`
@@ -58,7 +58,7 @@ There is no build or linter. Checks available:
   the program name before GTK loads, which names the window under Wayland), `Covers` (cover cache
   in `~/.cache/haltia-music/`).
 - [haltia-kit](https://github.com/haltia-de/kit) (`haltia_kit`, package `py3-haltia-kit`, at
-  `/mnt/data/Projects/b8k-compat`): `sound.Player` (libmpv, keeps the machine awake through logind
+  `/mnt/data/Projects/haltia-de/kit`): `sound.Player` (libmpv, keeps the machine awake through logind
   while playing and not paused), `Settings`, `dialogs` (questions inside the window). The look
   (large header and dialogs) comes from the desktop's GTK theme; the shell buzzes touches itself.
 - `playback.py` — `Session`, what plays (see Playback below); `answers.py` — `Answers`, the
