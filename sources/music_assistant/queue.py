@@ -43,6 +43,7 @@ class Queue:
     def __init__(self, source, events, work, player):
         self.src, self.events, self.work, self.make_player = source, events, work, player
         self.sound = None
+        self._sounding = None  # the Sendspin player being started
         self.tracks = []
         self.index = -1
         self.radio = None
@@ -174,12 +175,28 @@ class Queue:
             self._listening = True
             self.src.listen(self._event)
         if self.sound is None:
-            saved = self.src._saved() or {}
-            self.sound = Sound(saved["url"], saved["token"], self.src.key(),
-                               self.src.device_name(), self._player,
-                               state=self._sound_state, allowed=lambda: self.active)
-            await self.sound.start()
+            if self._sounding is None:
+                self._sounding = asyncio.ensure_future(self._start_sound())
+            # One command giving up does not give up for the others.
+            await asyncio.shield(self._sounding)
         await self._known()
+
+    async def _start_sound(self):
+        """The Sendspin player, kept only once it is up: one that failed is
+        closed, and the next command tries anew."""
+        try:
+            saved = self.src._saved() or {}
+            sound = Sound(saved["url"], saved["token"], self.src.key(),
+                          self.src.device_name(), self._player,
+                          state=self._sound_state, allowed=lambda: self.active)
+            try:
+                await sound.start()
+            except BaseException:
+                await sound.close()
+                raise
+        finally:
+            self._sounding = None
+        self.sound = sound
 
     async def _known(self):
         """The server takes commands for the player only once it has made it

@@ -82,6 +82,20 @@ class Connection(Case):
         await self.until(lambda: self.states == [True, False, True])
         self.assertEqual(await c.call("info"), {"ok": 1})
 
+    async def test_a_server_gone_while_signing_in_is_tried_again(self):
+        self.server.breaks = 1  # it restarts as the token comes
+        with self.assertRaises(ConnectionError):
+            await self.connect()
+        await self.until(lambda: self.c.connected)
+        self.assertEqual(self.states, [True])
+
+    async def test_it_keeps_trying_while_the_server_breaks_off(self):
+        self.server.breaks = 1000
+        with self.assertRaises(ConnectionError):
+            await self.connect()
+        await self.until(lambda: self.server.breaks <= 997)
+        self.assertFalse(self.c._task.done())
+
     async def test_no_connection_no_command(self):
         c = await self.connect()
         await c.close()

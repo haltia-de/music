@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
+import asyncio
 import os
 import sys
 import tempfile
@@ -125,6 +126,18 @@ class Source(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.sign_in(token="чужой")
 
+    def test_one_caller_giving_up_does_not_cancel_the_others(self):
+        self.assertTrue(self.sign_in(token=fake_ma.TOKEN))
+        loop.run(self.src._drop())
+
+        async def two():
+            first = asyncio.ensure_future(self.src.api())
+            second = asyncio.ensure_future(self.src.api())
+            await asyncio.sleep(0)
+            first.cancel()
+            return await second
+        self.assertIsNotNone(loop.run(two()))
+
     def test_no_server(self):
         with self.assertRaises(ConnectionError):
             self.src.login_next({"url": "127.0.0.1:9", "token": "x"})
@@ -171,6 +184,14 @@ class Source(unittest.TestCase):
         found = self.src.browse("")
         self.assertEqual([(i["kind"], i["id"]) for i in found],
                          [("list", ma.LIKES), ("folder", YM + "://")])
+
+    def test_a_server_restarting_while_signing_in(self):
+        self.sign_in(token=fake_ma.TOKEN)
+        self.server.answers["music/recommendations"] = []
+        self.server.breaks = 1
+        with self.assertRaises(ConnectionError):
+            self.src.home()
+        self.assertEqual(self.src.home(), [])
 
     def test_signing_out_forgets(self):
         self.sign_in(token=fake_ma.TOKEN)

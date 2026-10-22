@@ -15,12 +15,15 @@ class Server:
         self.sockets = []
         self.accounts = {"кот": "верный"}
         self.tokens = {TOKEN}
+        self.breaks = 0  # sign-ins it breaks off still, as when it restarts
+        self.sendspin = 0  # tries of the Sendspin player, each broken off
         self.runner = None
         self.url = ""
 
     async def start(self):
         app = web.Application()
         app.router.add_get("/ws", self._ws)
+        app.router.add_get("/sendspin", self._sendspin)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
@@ -60,6 +63,10 @@ class Server:
                     if ok:
                         self.tokens.add("короткий")
                     await ws.send_json({"message_id": mid, "result": result})
+                elif command == "auth" and self.breaks:
+                    self.breaks -= 1
+                    await ws.close()
+                    break
                 elif command == "auth":
                     if args.get("token") in self.tokens:
                         signed = True
@@ -79,6 +86,21 @@ class Server:
                     await self._answer(ws, mid, command, args)
         finally:
             self.sockets.remove(ws)
+        return ws
+
+    async def _sendspin(self, request):
+        """The player's proxy, which lets it in and goes away during the
+        handshake that follows."""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        self.sendspin += 1
+        await ws.receive()  # the player's token
+        await ws.send_json({"type": "auth_ok"})
+        try:
+            await asyncio.wait_for(ws.receive(), 0.2)  # the handshake's first message
+        except asyncio.TimeoutError:
+            pass
+        await ws.close()
         return ws
 
     async def _answer(self, ws, mid, command, args):

@@ -18,7 +18,9 @@ a seek, a pause or a play) the pipe ends at once and what the old stream
 still sends is dropped until the server starts a new one (or FLUSH_WAIT
 passes); after a clear from the server the next sound starts a new pipe. A stream that
 ended alone (a pause, a stop) ends the pipe, so the player stops and the
-machine may sleep.
+machine may sleep. A player that stops reading does not make the sound
+pile up: past QUEUED bytes waiting the pipe ends, and what comes is
+dropped for FLUSH_WAIT seconds before a new one starts.
 
 Sound(url, token, key, name, player, state=None, allowed=None)
   url, token    the server and the account's token
@@ -32,7 +34,10 @@ Sound(url, token, key, name, player, state=None, allowed=None)
 
 flush()         what is heard next starts anew (from any thread)
 
-await start()   connects, and keeps connecting after a drop until close()
+await start()   connects, and keeps connecting after a drop or a failed
+                try, whatever broke it, until close(); raises
+                ConnectionError when the first try fails or takes over
+                START seconds
 await close()
 player_id       the device's id on the server (its queue's id too)
 """
@@ -49,12 +54,13 @@ import aiohttp
 from gi.repository import GLib
 
 from .. import loop
-from .client import RETRY, RETRY_MAX, ws_url
+from .client import RETRY, RETRY_MAX, START, ws_url
 
 LOG = logging.getLogger("haltia-music.sendspin")
 JOIN = 0.5
 FLUSH_WAIT = 3  # seconds the old stream's sound is dropped after flush(), at most
 BUFFER = 200_000  # bytes the server may send ahead: ~1 s of PCM
+QUEUED = 2_000_000  # bytes waiting for the player, at most: ~10 s of PCM
 
 
 def raw(pcm):
@@ -71,6 +77,8 @@ class Pipe:
     def __init__(self, player, options):
         read, self.fd = os.pipe()
         self.chunks = queue.Queue()
+        self.queued = 0  # bytes in chunks
+        self.lock = threading.Lock()
         threading.Thread(target=self._write, daemon=True).start()
         GLib.idle_add(lambda: (player().play("fdclose://%d" % read, **options), False)[1])
 
@@ -81,6 +89,8 @@ class Pipe:
                 if data is None:
                     break
                 os.write(self.fd, data) if len(data) < 65536 else self._all(data)
+                with self.lock:
+                    self.queued -= len(data)
         except OSError:
             pass  # the player stopped reading
         finally:
@@ -92,9 +102,30 @@ class Pipe:
             view = view[os.write(self.fd, view):]
 
     def write(self, data):
+        """False, and nothing kept, when QUEUED bytes wait already: the
+        player does not read."""
+        with self.lock:
+            if self.queued + len(data) > QUEUED:
+                return False
+            self.queued += len(data)
         self.chunks.put(data)
+        return True
 
     def end(self):
+        """What waits is written out, then the pipe closes."""
+        self.chunks.put(None)
+
+    def drop(self):
+        """The pipe closes after what is being written, the rest let go."""
+        gone = 0
+        try:
+            while True:
+                data = self.chunks.get_nowait()
+                gone += len(data) if data else 0
+        except queue.Empty:
+            pass
+        with self.lock:
+            self.queued -= gone  # what is being written counts itself off
         self.chunks.put(None)
 
 
@@ -146,7 +177,10 @@ class Sound:
         first = asyncio.get_running_loop().create_future()
         self._closing = False
         self._task = asyncio.ensure_future(self._run(first))
-        await first
+        try:
+            await asyncio.wait_for(first, START)
+        except asyncio.TimeoutError:
+            raise ConnectionError("the server's Sendspin does not answer")
 
     async def _run(self, first):
         wait = RETRY
@@ -155,8 +189,10 @@ class Sound:
             try:
                 self.client = await self._client()
                 self.client.add_disconnect_listener(lambda *_a: closed.set())
-                await self._connect(self.client)
-            except (aiohttp.ClientError, OSError, asyncio.TimeoutError, RuntimeError) as exc:
+                await asyncio.wait_for(self._connect(self.client), START)
+            except Exception as exc:  # the server went away during the handshake, or worse
+                LOG.debug("no connection: %r", exc)
+                await self._drop_client()
                 if not first.done():
                     first.set_exception(ConnectionError(str(exc) or "no connection"))
             else:
@@ -169,10 +205,26 @@ class Sound:
                 self._end()
                 if self.state and not self._closing:
                     self.state(False)
+                if not self._closing:
+                    await self._drop_client()
             if self._closing:
                 break
             await asyncio.sleep(wait)
             wait = min(wait * 2, RETRY_MAX)
+
+    async def _drop_client(self):
+        """A client whose connection failed or went is let go, with its
+        session."""
+        c, self.client = self.client, None
+        if c is None:
+            return
+        try:
+            await asyncio.wait_for(c.disconnect(), 5)
+        except Exception:
+            pass
+        session = getattr(c, "_session", None)
+        if session is not None and not session.closed:
+            await session.close()
 
     async def _connect(self, c):
         """SendspinClient.connect, with the proxy's sign-in first: the
@@ -215,7 +267,11 @@ class Sound:
             LOG.debug("new pipe (%s)", "flushed" if self.flushing else "first")
             self.format, self.flushing = kind, False
             self.pipe = Pipe(self.player, raw(fmt.pcm_format))
-        self.pipe.write(data)
+        if not self.pipe.write(data):
+            LOG.warning("the player does not read: its sound dropped")
+            self.pipe.drop()
+            self.pipe = None
+            self.dropping = time.monotonic() + FLUSH_WAIT
 
     def flush(self):
         """What is heard next starts anew: the program asked for it. From

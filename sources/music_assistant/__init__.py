@@ -223,13 +223,13 @@ class MusicAssistant:
                 except BaseException:
                     await c.close()
                     raise
+                finally:
+                    self._starting = None
                 self._client = c
                 return c
             self._starting = asyncio.ensure_future(start())
-        try:
-            return await self._starting
-        finally:
-            self._starting = None
+        # One caller giving up does not give up for the others.
+        return await asyncio.shield(self._starting)
 
     async def _drop(self):
         if self._client is not None:
