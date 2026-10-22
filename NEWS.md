@@ -1,5 +1,19 @@
 # Что нового · What's new
 
+## 3.0.2 (2026-10-22)
+
+### Русский
+
+Music Assistant снова подключается сам после перезапуска сервера; обложки загружаются безопасно и занимают меньше памяти.
+
+На стартовом экране кнопка «домой» находится вверху слева; «Главная» и «Обзор» перенесены вправо.
+
+### English
+
+Music Assistant reconnects automatically after its server restarts; covers load safely and use less memory.
+
+On the start screen, the home button is at the top left; Home and Browse have moved to the right.
+
 ## 3.0.1 (2026-10-20)
 
 ### Русский

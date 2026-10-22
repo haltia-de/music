@@ -1,3 +1,12 @@
+haltia-music (3.0.2) unstable; urgency=medium
+
+  * Music Assistant reconnects automatically after its server restarts; covers
+    load safely and use less memory.
+  * On the start screen, the home button is at the top left; Home and Browse
+    have moved to the right.
+
+ -- Haltia <rensomail@gmail.com>  Thu, 22 Oct 2026 09:33:00 +0300
+
 haltia-music (3.0.1) unstable; urgency=medium
 
   * Music Assistant is experimental: off until switched on in the settings.

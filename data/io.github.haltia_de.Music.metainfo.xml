@@ -18,6 +18,14 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="3.0.2" date="2026-10-22">
+      <description>
+        <p>Music Assistant reconnects automatically after its server restarts; covers load safely and use less memory.</p>
+        <p>On the start screen, the home button is at the top left; Home and Browse have moved to the right.</p>
+        <p xml:lang="ru">Music Assistant снова подключается сам после перезапуска сервера; обложки загружаются безопасно и занимают меньше памяти.</p>
+        <p xml:lang="ru">На стартовом экране кнопка «домой» находится вверху слева; «Главная» и «Обзор» перенесены вправо.</p>
+      </description>
+    </release>
     <release version="3.0.1" date="2026-10-20">
       <description>
         <p>Music Assistant is experimental for now and off until switched on in Settings → Sources; if it was set up already, there is no need to sign in again, only to switch it on.</p>
