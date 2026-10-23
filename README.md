@@ -6,8 +6,6 @@
 для планшета Lenovo YOGA Tablet 10 (B8000-H)
 ([device-lenovo-b8000h](https://github.com/haltia-de/device-lenovo-b8000h)),
 но работает как обычная GTK-программа и в GNOME, KDE и других средах.
-До 2.0 называлась `b8k-music` (`io.github.trudenboy.Music`); с 3.0 старых
-имён нет.
 
 Неофициальный клиент Яндекс Музыки, не связан с Яндексом; без подписки
 Плюс часть треков может не играть.
