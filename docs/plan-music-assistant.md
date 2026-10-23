@@ -2,7 +2,9 @@
 
 Date: 2026-10-20. Settled with the user in an architecture review; terms as in `CONTEXT.md`.
 
-Музыка plays Яндекс Музыка only, and the app assumes one source throughout: `self.src` is
+**Status, 22 October 2026: done in 3.0.** Music Assistant is a second source. It stays off until the person switches it on under Settings → Sources. The paragraphs below record the state before 3.0 and the decisions that shaped the work.
+
+Before 3.0, Музыка played Яндекс Музыка only, and the app assumed one source throughout: `self.src` is
 `min(self.sources)`, `Answers`, `Likes`, `Session` and the quality are built around it, and
 `track["source"]` is never read. Music Assistant (MA) differs from Яндекс in three ways that shape
 the plan: it gives no full-track URL to a client that is not its player (`/preview` is 30 s), its

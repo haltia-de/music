@@ -2,7 +2,7 @@
 
 The words this project uses for what it does.
 
-- **Source** — a music service (`sources/`): Яндекс Музыка, Music Assistant planned. Its
+- **Source** — a music service (`sources/`): Яндекс Музыка and Music Assistant. Music Assistant is off until the person switches it on. Its
   interface is the docstring of `sources/__init__.py`. Every track, kept answer and heart
   belongs to one; playing and liking go to the track's own Source.
 - **Switched on / off** — whether a Source is offered at all, set in the settings as in Видео.
