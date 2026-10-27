@@ -42,10 +42,9 @@ import hashlib
 import os
 import sys
 import threading
-import urllib.request
+import urllib  # urllib.request is imported where a cover is fetched
 from collections import OrderedDict
 from types import SimpleNamespace
-from concurrent.futures import ThreadPoolExecutor
 
 import gi
 from gi.repository import Gio, GLib
@@ -237,6 +236,15 @@ def qr_code(text, size):
     return area
 
 
+def ThreadPoolExecutor(**kw):
+    """concurrent.futures' pool, imported once the covers are made (after
+    the window): on the tablet that import alone took a third of a second
+    (haltia-paint)."""
+    from concurrent.futures import ThreadPoolExecutor as pool
+
+    return pool(**kw)
+
+
 class Covers:
     """Album covers: files on disk (COVERS_MAX bytes, the least used let go
     first), decoded ones in memory. Fetching and decoding happen in
@@ -318,6 +326,8 @@ class Covers:
         GLib.idle_add(self._show, key, token, pixbuf)
 
     def _fetch(self, url, path):
+        import urllib.request  # in the worker: not part of the start
+
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=20) as resp:
             data = resp.read(COVER_MAX)
@@ -384,11 +394,12 @@ def decode(path, size):
 class Music(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID)
-        self.covers = Covers()
         self.settings = Settings("music")
-        self.sources = sources.Sources(sources.load(), self.settings, CACHE, self.work,
-                                       self.later, self.on_signed,
-                                       lambda: self.update_hearts(), self.say)
+        # The services, the covers and what plays come after the window's
+        # first frame (loaded): importing the services' libraries (aiohttp,
+        # yandex-music) is most of the program's start.
+        self.covers = self.sources = self.session = None
+        self.loading = False
         self.stale = False  # the pages are made anew on leaving the settings
         # Where one is: the section's root first, then what was opened in it.
         # A view is a dict; its page and widgets live in it while it is open.
@@ -399,6 +410,19 @@ class Music(Gtk.Application):
         self.seeking = False
         self.win = None
         self.mpris = None  # what plays, told to the desktop
+
+    def load(self):
+        """On a thread of its own: the services' modules and the covers'
+        pool; loaded() takes them on the GTK side."""
+        found = sources.load()
+        covers = Covers()
+        GLib.idle_add(self.loaded, found, covers)
+
+    def loaded(self, found, covers):
+        self.covers = covers
+        self.sources = sources.Sources(found, self.settings, CACHE, self.work,
+                                       self.later, self.on_signed,
+                                       lambda: self.update_hearts(), self.say)
         events = SimpleNamespace(changed=self.on_track, grew=self.on_grew,
                                  playing=self.on_playing, time=self.on_time, failed=self.say)
         # The player keeps the machine awake while it plays, not paused.
@@ -408,6 +432,17 @@ class Music(Gtk.Application):
                                            on_pause=lambda on: self.session.paused(on),
                                            on_error=self.session.ended),
             self.work, self.later, events)
+        if not self.sources.all():
+            self.note_only("Нет ни одного музыкального сервиса.")
+        else:
+            self.show_main()
+        try:
+            self.mpris = mpris.Mpris(self.get_dbus_connection(), APP_ID, "Музыка",
+                                     self.session, self.stop, self.win.present,
+                                     lambda track: self.covers.file_uri(track.get("cover")))
+        except (GLib.Error, AttributeError) as exc:  # no session bus: no MPRIS
+            sys.stderr.write("haltia-music: no MPRIS: %s\n" % exc)
+        return False
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -470,16 +505,12 @@ class Music(Gtk.Application):
         self.win.show_all()
         self.bar.hide()
         self.win.set_focus(None)
-        if not self.sources.all():
-            self.note_only("Нет ни одного музыкального сервиса.")
-        else:
-            self.show_main()
-        try:
-            self.mpris = mpris.Mpris(self.get_dbus_connection(), APP_ID, "Музыка",
-                                     self.session, self.stop, self.win.present,
-                                     lambda track: self.covers.file_uri(track.get("cover")))
-        except (GLib.Error, AttributeError) as exc:  # no session bus: no MPRIS
-            sys.stderr.write("haltia-music: no MPRIS: %s\n" % exc)
+        if self.sources is None and not self.loading:
+            self.note_only("Загрузка…")
+            self.loading = True
+            # After the first frame: the window shows before the services load.
+            GLib.idle_add(lambda: (threading.Thread(target=self.load, daemon=True).start(),
+                                   False)[1], priority=GLib.PRIORITY_LOW)
 
     def on_close(self, *_a):
         # Closing is meant: the music stops with the window.
@@ -1206,12 +1237,12 @@ class Music(Gtk.Application):
             self.session.current).toggle(self.session.current))
         self.bar_heart.set_no_show_all(True)
         bar.pack_start(self.bar_heart, False, False, 0)
-        for label, cls, cb in (("⏮", "ctl", self.session.prev),
-                               ("▶", "ctl main", self.session.toggle),
-                               ("⏭", "ctl", self.session.next)):
+        # The bar shows only once something plays, so the session is there.
+        for label, cls, name in (("⏮", "ctl", "prev"), ("▶", "ctl main", "toggle"),
+                                 ("⏭", "ctl", "next")):
             btn = styled(Gtk.Button(label=label), *cls.split())
             btn.set_valign(Gtk.Align.CENTER)
-            btn.connect("clicked", lambda *_a, f=cb: f())
+            btn.connect("clicked", lambda *_a, n=name: getattr(self.session, n)())
             bar.pack_start(btn, False, False, 0)
             if "main" in cls:
                 self.play_btn = btn
@@ -1294,11 +1325,12 @@ class Music(Gtk.Application):
             self.play_btn.set_label("⏸" if on else "▶")
 
     def stop(self):
-        self.session.stop()
+        if self.session:  # none before the services are loaded
+            self.session.stop()
         self.radio_view = None
 
     def do_shutdown(self):
-        for src in self.sources.all():
+        for src in self.sources.all() if self.sources else ():
             self.sources.answers(src.id).flush()
         Gtk.Application.do_shutdown(self)
 
