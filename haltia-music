@@ -413,10 +413,21 @@ class Music(Gtk.Application):
 
     def load(self):
         """On a thread of its own: the services' modules and the covers'
-        pool; loaded() takes them on the GTK side."""
-        found = sources.load()
-        covers = Covers()
+        pool; loaded() takes them on the GTK side. A failure says so
+        instead of leaving «Загрузка…» up for good; the next window tries
+        again."""
+        try:
+            found = sources.load()
+            covers = Covers()
+        except Exception as e:
+            print("haltia-music: loading failed: %r" % e, file=sys.stderr)
+            GLib.idle_add(self.load_failed)
+            return
         GLib.idle_add(self.loaded, found, covers)
+
+    def load_failed(self):
+        self.loading = False
+        self.note_only("Не удалось запустить музыкальные сервисы.")
 
     def loaded(self, found, covers):
         self.covers = covers
