@@ -1,3 +1,10 @@
+haltia-music (3.0.4) unstable; urgency=medium
+
+  * Run the program's code from a module, so that Python loads it
+    compiled.
+
+ -- Haltia <rensomail@gmail.com>  Wed, 28 Oct 2026 14:00:00 +0300
+
 haltia-music (3.0.3) unstable; urgency=medium
 
   * Show the window before the music services load, for a much faster start;
