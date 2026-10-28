@@ -9,6 +9,8 @@ override_dh_auto_install:
 	sh install.sh $(CURDIR)/debian/haltia-music /usr
 	mv debian/haltia-music/usr/lib/haltia-music debian/haltia-music/usr/share/
 	rmdir debian/haltia-music/usr/lib
+	# The stub in bin runs the program's code from there.
+	sed -i 's|/usr/lib/haltia-music|/usr/share/haltia-music|g' debian/haltia-music/usr/bin/haltia-music
 
 # The tests need haltia-kit, which is no build dependency; the APKBUILD runs them.
 override_dh_auto_test:

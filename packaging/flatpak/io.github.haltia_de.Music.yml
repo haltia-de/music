@@ -29,6 +29,8 @@ modules:
     buildsystem: simple
     build-commands:
       - HALTIA_WHEELS=no sh install.sh "" /app
+      # Compiled here, as /app is read-only when it runs (hashes: OSTree drops mtimes).
+      - python3 -m compileall -q --invalidation-mode checked-hash /app/lib/haltia-music
     sources:
       - type: dir
         path: ../..

@@ -34,8 +34,13 @@ There is no build or linter. Checks available:
   scratch ROOT).
 - `sh install.sh [ROOT] [PREFIX]` — PREFIX `/usr/local` by default, `/usr` from the APKBUILD
   (`packaging/alpine/`). Installs
-  the program to `PREFIX/bin`, the top-level `*.py` modules and `sources/` to `PREFIX/lib/haltia-music`
-  (a new module needs a line there; the program finds that folder from its own path), `data/` (the
+  the script as the module `PREFIX/lib/haltia-music/haltia_music_main.py`, with
+  `PREFIX/bin/haltia-music` a stub that runs it (`runpy.run_module(..., run_name="__main__",
+  alter_sys=False)`): Python keeps no bytecode of the script it is started with, while a module
+  loads from its `__pycache__`, which the package compiles. `sys.argv`, the `#!/usr/bin/env python3`
+  and so the command line the shell matches (`python3 PREFIX/bin/haltia-music`) stay the script's;
+  `__file__` is the module's. The top-level `*.py` modules and `sources/` go to
+  `PREFIX/lib/haltia-music` too (a new module needs a line there; the program finds that folder from its own path), `data/` (the
   `.desktop` file with `X-B8K-Home`/`X-B8K-Replaces=music`, hicolor icon, metainfo) to
   `PREFIX/share`, and removes the shell's old `apps.d/music.conf` entry. Downloads pinned wheels
   (sha256-checked, cached in `$HALTIA_CACHE` or `.cache/`) and unpacks them into the lib folder.
@@ -45,11 +50,12 @@ There is no build or linter. Checks available:
   /tmp). Modules: `libmpv.yml` (sound-only libmpv with libass and libplacebo; ffmpeg is the
   runtime's), `haltia-kit.yml` (a copy of the kit's), `python3-requirements.yml` (written by
   `requirements.py` from `requirements.txt`: run it after changing that), then `install.sh` with
-  `HALTIA_WHEELS=no`. Its data is in `~/.var/app/io.github.haltia_de.Music/`.
+  `HALTIA_WHEELS=no` and `compileall` of `/app/lib/haltia-music` (checked-hash: `/app` is read-only and
+  OSTree drops mtimes). Its data is in `~/.var/app/io.github.haltia_de.Music/`.
 - Debian/Ubuntu: `dpkg-buildpackage -us -uc -b` (`debian/`, Architecture all; tried in docker
   `ubuntu:noble` and `debian:trixie` with lintian). The distribution's libraries, except the two
   Yandex ones, which `install.sh` vendors into `/usr/share/haltia-music` (the program looks there
-  before `PREFIX/lib/haltia-music`). Both
+  before `PREFIX/lib/haltia-music`; `debian/rules` points the stub there). Both
   packages leave out the names from before 2.0.
 
 ## Architecture
