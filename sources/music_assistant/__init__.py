@@ -18,6 +18,7 @@ it can. Everything runs on the sources' loop through one connection
 """
 import asyncio
 import base64
+import importlib.util
 import os
 import socket
 
@@ -34,11 +35,12 @@ try:
     from . import client
 except ImportError:
     client = None
-try:
-    import aiosendspin.client  # noqa: F401  the sound needs it
-    SENDSPIN = True
-except ImportError:
-    SENDSPIN = False
+# Sendspin's libraries are only looked for here; sound.py imports them when
+# this device first plays. Importing aiosendspin.client took most of a
+# second of the program's start on a PC (mashumaro builds its classes).
+SENDSPIN_NEEDS = ("aiosendspin", "cpace", "cryptography", "mashumaro", "noise", "orjson",
+                  "zeroconf")
+SENDSPIN = all(importlib.util.find_spec(name) is not None for name in SENDSPIN_NEEDS)
 
 ACCOUNT = os.path.join(GLib.get_user_data_dir(), "haltia-music", "music_assistant.json")
 VAULT = vault.Vault("music_assistant", ACCOUNT,

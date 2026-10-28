@@ -88,7 +88,9 @@ There is no build or linter. Checks available:
   device's Sendspin key in `Vault`), `queue.py` (`Queue`, the other kind of `Session`: commands to
   `player_queues/*`, state from the server's events), `sound.py` (this device as an MA player over
   Sendspin through `/sendspin`: FLAC or PCM into the program's player through a pipe). Without
-  aiohttp the package has no `SOURCE` and is left out; its tests are skipped. Its tests run
+  aiohttp the package has no `SOURCE` and is left out; its tests are skipped. Sendspin's libraries
+  are only looked for at load (`SENDSPIN_NEEDS`, `find_spec`) and imported by `sound.py` when
+  this device first plays: importing `aiosendspin.client` costs about a second on a PC. Its tests run
   against `tests/fake_ma.py`, a fake server on the sources' loop.
 - `sources/loop.py` — the asyncio loop the sources share (`run`, `start`, `call`).
 - `sources/yandex.py` — Яндекс Музыка. Both libraries are asyncio; they run on the sources' loop
@@ -108,6 +110,15 @@ There is no build or linter. Checks available:
     and adds a `setting…` seed. Feedback goes to the session.
   - Item ids are prefixed strings the source parses back: `playlist:<uid>:<kind>`, `album:<id>`,
     `artist:<id>`, `stations:<type>`, `tag:<slug>`, …
+
+### Start
+
+The window comes first: `Music.__init__` loads nothing, `do_activate` shows the window with
+«Загрузка…» and then starts `Music.load` on a thread (`sources.load()`, the covers' pool);
+`loaded` builds `Sources`, the session and MPRIS on the GTK side and shows the pages. Until then
+`self.sources`, `self.session` and `self.covers` are None; code reachable before (closing,
+shutdown) checks. Keep heavy imports (`urllib.request`, `concurrent.futures`, a service's
+library) out of the module's top level.
 
 ### Threading rule
 
