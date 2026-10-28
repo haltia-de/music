@@ -1,5 +1,19 @@
 # Что нового · What's new
 
+## 3.0.3 (2026-10-28)
+
+### Русский
+
+Музыка открывается намного быстрее: окно появляется сразу, а музыкальные сервисы загружаются уже после него.
+
+Если сервисы загрузить не удалось, вместо бесконечного «Загрузка…» появляется сообщение об этом.
+
+### English
+
+Music opens much faster: the window shows at once, and the music services load after it.
+
+If the services fail to load, a note says so instead of an endless «Загрузка…» (Loading…).
+
 ## 3.0.2 (2026-10-22)
 
 ### Русский

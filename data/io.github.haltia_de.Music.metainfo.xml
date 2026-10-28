@@ -18,6 +18,14 @@
   <content_rating type="oars-1.1"/>
   <requires><control>touch</control></requires>
   <releases>
+    <release version="3.0.3" date="2026-10-28">
+      <description>
+        <p>Music opens much faster: the window shows at once, and the music services load after it.</p>
+        <p>If the services fail to load, a note says so instead of an endless «Загрузка…» (Loading…).</p>
+        <p xml:lang="ru">Музыка открывается намного быстрее: окно появляется сразу, а музыкальные сервисы загружаются уже после него.</p>
+        <p xml:lang="ru">Если сервисы загрузить не удалось, вместо бесконечного «Загрузка…» появляется сообщение об этом.</p>
+      </description>
+    </release>
     <release version="3.0.2" date="2026-10-22">
       <description>
         <p>Music Assistant reconnects automatically after its server restarts; covers load safely and use less memory.</p>
